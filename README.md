@@ -111,6 +111,7 @@ end
 For comprehensive documentation, examples, and advanced usage patterns, see:
 
 📖 **[USAGE_GUIDE.md](USAGE_GUIDE.md)** - Complete usage guide with all features and examples
+🔒 **[SECURITY.md](SECURITY.md)** - Security policy, audit results, and best practices
 
 The usage guide covers:
 - Installation and setup
@@ -138,6 +139,11 @@ The usage guide covers:
 - Token expiration checking
 - Phone number authorization verification
 - Comprehensive input validation
+- **Certificate Pinning**: SHA256 public key pinning support
+- **Rate Limiting**: Built-in rate limiting for certificate fetches (10 requests/minute/URL)
+- **Security Event Logging**: Comprehensive audit trail for all security events
+- **Configuration Validation**: Security-enforced configuration constraints
+- **Thread Safety**: Mutex-protected operations for concurrent access
 
 ### Performance
 

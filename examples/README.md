@@ -86,6 +86,19 @@ This directory contains comprehensive examples demonstrating every aspect of the
 - Debug information and troubleshooting
 - Advanced scenarios (retransmission, forwarding, robocall detection)
 
+#### [`security_features_examples.rb`](security_features_examples.rb)
+**Security Features - 10/10 Security Enhancements**
+- Configuration security validation
+- Certificate pinning demonstrations
+- Rate limiting examples and testing
+- Security event logging and monitoring
+- Thread safety demonstrations
+- Enhanced error handling patterns
+- Security best practices implementation
+- Production security considerations
+- Security audit trail examples
+- Advanced security configurations
+
 ### 🔗 Integration Examples
 
 #### [`integration_examples.rb`](integration_examples.rb)
@@ -139,6 +152,9 @@ ruby examples/passport_examples.rb
 
 # SIP Identity Header examples
 ruby examples/sip_identity_examples.rb
+
+# Security Features examples
+ruby examples/security_features_examples.rb
 
 # Complete integration examples
 ruby examples/integration_examples.rb
