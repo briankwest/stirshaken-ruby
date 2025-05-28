@@ -33,30 +33,45 @@ module StirShaken
     def sign_call(originating_number:, destination_number:, attestation:, 
                   origination_id: nil, additional_info: {})
       
-      # Validate inputs
-      Attestation.validate!(attestation)
-      
-      # Ensure destination is an array
-      destination_numbers = Array(destination_number)
-      
-      # Create PASSporT token
-      passport_token = Passport.create(
-        originating_number: originating_number,
-        destination_numbers: destination_numbers,
-        attestation: attestation,
-        origination_id: origination_id,
-        certificate_url: certificate_url,
-        private_key: private_key
-      )
+      begin
+        # Validate inputs
+        Attestation.validate!(attestation)
+        
+        # Ensure destination is an array
+        destination_numbers = Array(destination_number)
+        
+        # Create PASSporT token
+        passport_token = Passport.create(
+          originating_number: originating_number,
+          destination_numbers: destination_numbers,
+          attestation: attestation,
+          origination_id: origination_id,
+          certificate_url: certificate_url,
+          private_key: private_key
+        )
 
-      # Create SIP Identity header
-      SipIdentity.create(
-        passport_token: passport_token,
-        certificate_url: certificate_url,
-        algorithm: Passport::ALGORITHM,
-        extension: Passport::EXTENSION,
-        additional_info: additional_info
-      )
+        # Create SIP Identity header
+        identity_header = SipIdentity.create(
+          passport_token: passport_token,
+          certificate_url: certificate_url,
+          algorithm: Passport::ALGORITHM,
+          extension: Passport::EXTENSION,
+          additional_info: additional_info
+        )
+
+        # Log successful authentication
+        SecurityLogger.log_authentication_success(originating_number, destination_numbers, attestation)
+
+        identity_header
+      rescue => error
+        # Log authentication failure
+        SecurityLogger.log_security_failure(:authentication_failure, error, {
+          originating_number: SecurityLogger.send(:mask_phone_number, originating_number),
+          destination_count: Array(destination_number).size,
+          attestation: attestation
+        })
+        raise
+      end
     end
 
     ##
@@ -109,7 +124,15 @@ module StirShaken
     # @param force_refresh [Boolean] whether to bypass cache
     # @return [OpenSSL::X509::Certificate] the certificate
     def load_certificate(force_refresh: false)
-      @certificate = CertificateManager.fetch_certificate(certificate_url, force_refresh: force_refresh)
+      begin
+        @certificate = CertificateManager.fetch_certificate(certificate_url, force_refresh: force_refresh)
+        SecurityLogger.log_certificate_fetch(certificate_url, true)
+        @certificate
+      rescue => error
+        SecurityLogger.log_certificate_fetch(certificate_url, false)
+        SecurityLogger.log_security_failure(:certificate_fetch, error, { url: certificate_url })
+        raise
+      end
     end
 
     ##

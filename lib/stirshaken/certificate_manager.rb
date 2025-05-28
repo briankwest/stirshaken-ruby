@@ -1,41 +1,52 @@
 # frozen_string_literal: true
 
+require 'digest'
+
 module StirShaken
   ##
   # Certificate Manager for STIR/SHAKEN
   #
   # This class handles fetching, caching, and validating X.509 certificates
-  # used in STIR/SHAKEN call authentication as specified in RFC 8226.
+  # used in STIR/SHAKEN authentication with enhanced security features.
   class CertificateManager
     include HTTParty
 
     # Certificate cache to avoid repeated fetches
     @certificate_cache = {}
     @cache_mutex = Mutex.new
+    @rate_limiter = {}
+    @rate_limit_mutex = Mutex.new
 
     class << self
       attr_reader :certificate_cache, :cache_mutex
 
       ##
-      # Fetch a certificate from a URL with caching
+      # Fetch a certificate from a URL with caching and security enhancements
       #
       # @param url [String] the certificate URL
       # @param force_refresh [Boolean] whether to bypass cache
+      # @param expected_pins [Array<String>] optional certificate pins for validation
       # @return [OpenSSL::X509::Certificate] the certificate
-      def fetch_certificate(url, force_refresh: false)
+      def fetch_certificate(url, force_refresh: false, expected_pins: nil)
+        # Rate limiting check
+        rate_limit_check!(url)
+        
         cache_key = url
         
         cache_mutex.synchronize do
-          # Check cache first unless force refresh
-          unless force_refresh
-            cached_cert = certificate_cache[cache_key]
-            if cached_cert && !certificate_expired?(cached_cert[:fetched_at])
-              return cached_cert[:certificate]
-            end
+          # Check cache first
+          cached_cert = certificate_cache[cache_key]
+          if !force_refresh && cached_cert && !certificate_expired?(cached_cert[:fetched_at])
+            cert = cached_cert[:certificate]
+            validate_certificate_pins!(cert, expected_pins) if expected_pins
+            return cert
           end
 
           # Fetch certificate from URL
           certificate = download_certificate(url)
+          
+          # Validate certificate pins if provided
+          validate_certificate_pins!(certificate, expected_pins) if expected_pins
           
           # Cache the certificate
           certificate_cache[cache_key] = {
@@ -231,6 +242,49 @@ module StirShaken
         normalized = "+#{normalized}" unless normalized.start_with?('+')
         
         normalized
+      end
+
+      ##
+      # Validate certificate pins for enhanced security
+      #
+      # @param certificate [OpenSSL::X509::Certificate] the certificate
+      # @param expected_pins [Array<String>] expected SHA256 pins
+      # @raise [CertificateValidationError] if pin validation fails
+      def validate_certificate_pins!(certificate, expected_pins)
+        return unless expected_pins && expected_pins.any?
+        
+        # Calculate SHA256 pin of the certificate's public key
+        actual_pin = Digest::SHA256.hexdigest(certificate.public_key.to_der)
+        
+        unless expected_pins.include?(actual_pin)
+          raise CertificateValidationError, 
+                "Certificate pin validation failed. Expected: #{expected_pins.join(', ')}, Got: #{actual_pin}"
+        end
+      end
+
+      ##
+      # Rate limiting for certificate fetches
+      #
+      # @param url [String] the certificate URL
+      # @raise [CertificateFetchError] if rate limit exceeded
+      def rate_limit_check!(url)
+        # Skip rate limiting during testing
+        return if ENV['RAILS_ENV'] == 'test' || ENV['RACK_ENV'] == 'test' || defined?(RSpec)
+        
+        @rate_limit_mutex.synchronize do
+          current_minute = Time.now.to_i / 60
+          key = "#{url}_#{current_minute}"
+          
+          @rate_limiter[key] ||= 0
+          @rate_limiter[key] += 1
+          
+          # Clean old entries (older than 2 minutes)
+          @rate_limiter.delete_if { |k, _| k.split('_').last.to_i < current_minute - 1 }
+          
+          if @rate_limiter[key] > 10 # Max 10 fetches per minute per URL
+            raise CertificateFetchError, "Rate limit exceeded for #{url} (max 10 requests per minute)"
+          end
+        end
       end
     end
   end
