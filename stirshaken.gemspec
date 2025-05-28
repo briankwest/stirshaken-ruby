@@ -15,7 +15,7 @@ Gem::Specification.new do |spec|
   spec.metadata["changelog_uri"] = "https://github.com/yourusername/stirshaken-ruby/blob/main/CHANGELOG.md"
 
   # Specify which files should be added to the gem when it is released.
-  spec.files = Dir.glob("{lib,exe}/**/*") + %w[README.md LICENSE.txt CHANGELOG.md SECURITY.md USAGE_GUIDE.md]
+  spec.files = Dir.glob("{lib,exe}/**/*") + %w[README.md LICENSE CHANGELOG.md SECURITY.md USAGE_GUIDE.md]
   spec.bindir        = "exe"
   spec.executables   = spec.files.grep(%r{\Aexe/}) { |f| File.basename(f) }
   spec.require_paths = ["lib"]

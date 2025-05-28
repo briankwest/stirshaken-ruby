@@ -237,7 +237,7 @@ puts info[:attestation_description]   # Human-readable attestation description
 
 ## License
 
-This project is licensed under the MIT License - see the LICENSE file for details.
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
 
 ## Support
 
