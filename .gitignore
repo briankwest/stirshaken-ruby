@@ -1,0 +1,80 @@
+# Byte-compiled / optimized / DLL files
+*.gem
+*.rbc
+/.config
+/coverage/
+/InstalledFiles
+/pkg/
+/spec/reports/
+/spec/examples.txt
+/test/tmp/
+/test/version_tmp/
+/tmp/
+
+# Used by dotenv library to load environment variables.
+.env
+
+# Ignore Byebug command history file.
+.byebug_history
+
+# Ignore RSpec status file
+.rspec_status
+
+# Ignore bundler config.
+/.bundle/
+/vendor/bundle
+
+# Ignore the default SQLite database.
+/db/*.sqlite3
+/db/*.sqlite3-journal
+
+# Ignore all logfiles and tempfiles.
+/log/*
+/tmp/*
+!/log/.keep
+!/tmp/.keep
+
+# Ignore uploaded files in development
+/storage/*
+!/storage/.keep
+
+# Ignore master key for decrypting credentials and more.
+/config/master.key
+
+# Ignore application configuration
+/config/application.yml
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# YARD documentation
+.yardoc/
+doc/
+
+# RDoc documentation
+/rdoc/
+
+# SimpleCov coverage reports
+/coverage/
+
+# VCR cassettes (uncomment if you want to ignore them)
+# /spec/vcr_cassettes/
+
+# Ignore built gems
+*.gem
+
+# Ignore package files
+/pkg/ 
