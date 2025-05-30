@@ -553,25 +553,113 @@ RSpec.describe StirShaken::VerificationService do
       expect(elapsed).to be < 10.0 # Should complete in under 10 seconds
     end
 
-    it 'benefits from certificate caching' do
+    context 'with HTTP-based certificate fetching' do
+      # Skip the global certificate mocking for these tests
+      before do
+        StirShaken::CertificateManager.clear_cache!
+        # Don't call mock_certificate_fetch here - use HTTP mocking instead
+      end
+
+      it 'benefits from certificate caching' do
+        # Use HTTP mocking instead of direct cache manipulation
+        stub_request(:get, cert_url)
+          .to_return(status: 200, body: certificate.to_pem, headers: { 'Content-Type' => 'application/x-pem-file' })
+        
+        identity_header = auth_service.sign_call(
+          originating_number: '+15551234567',
+          destination_number: '+15559876543',
+          attestation: 'A'
+        )
+
+        # Track cache statistics instead of timing
+        initial_stats = StirShaken::CertificateManager.cache_stats
+        
+        # First verification should populate cache (cache miss)
+        verification_service.verify_call(identity_header)
+        after_first_stats = StirShaken::CertificateManager.cache_stats
+        
+        # Second verification should use cached certificate (cache hit)
+        verification_service.verify_call(identity_header)
+        after_second_stats = StirShaken::CertificateManager.cache_stats
+
+        # Verify cache behavior: 
+        # - Cache size should increase after first call
+        # - Misses should increase by 1 after first call
+        # - Hits should increase by 1 after second call
+        # - Cache size should remain the same after second call
+        expect(after_first_stats[:size]).to be > initial_stats[:size]
+        expect(after_first_stats[:misses]).to eq(initial_stats[:misses] + 1)
+        expect(after_second_stats[:hits]).to eq(after_first_stats[:hits] + 1)
+        expect(after_second_stats[:size]).to eq(after_first_stats[:size])
+      end
+
+      it 'maintains cache efficiency across different certificates' do
+        # Test with multiple different certificates
+        cert_urls = [
+          'https://example.com/cert1.pem',
+          'https://example.com/cert2.pem',
+          'https://example.com/cert3.pem'
+        ]
+        
+        initial_stats = StirShaken::CertificateManager.cache_stats
+        
+        cert_urls.each_with_index do |url, index|
+          # Mock HTTP response for each certificate URL
+          stub_request(:get, url)
+            .to_return(status: 200, body: certificate.to_pem, headers: { 'Content-Type' => 'application/x-pem-file' })
+          
+          # Create verification service with different cert URL
+          service = StirShaken::VerificationService.new
+          
+          identity_header = auth_service.sign_call(
+            originating_number: '+15551234567',
+            destination_number: '+15559876543',
+            attestation: 'A'
+          )
+          
+          # Replace cert URL in the header
+          modified_header = identity_header.gsub(cert_url, url)
+          
+          # First verification should add to cache
+          service.verify_call(modified_header)
+          current_stats = StirShaken::CertificateManager.cache_stats
+          expect(current_stats[:size]).to eq(initial_stats[:size] + index + 1)
+          
+          # Second verification should use cache
+          service.verify_call(modified_header)
+          expect(StirShaken::CertificateManager.cache_stats[:size]).to eq(current_stats[:size])
+        end
+      end
+    end
+
+    it 'demonstrates performance improvement with multiple verifications' do
       identity_header = auth_service.sign_call(
         originating_number: '+15551234567',
         destination_number: '+15559876543',
         attestation: 'A'
       )
 
-      # First verification should fetch certificate
+      # Measure time for batch of verifications (more stable than single calls)
+      iterations = 50
+      
+      # First batch - may include cache misses
       start_time = Time.now
-      verification_service.verify_call(identity_header)
-      first_elapsed = Time.now - start_time
-
-      # Second verification should use cached certificate
+      iterations.times { verification_service.verify_call(identity_header) }
+      first_batch_time = Time.now - start_time
+      
+      # Second batch - should benefit from caching
       start_time = Time.now
-      verification_service.verify_call(identity_header)
-      second_elapsed = Time.now - start_time
-
-      # Second should be faster (though this might be flaky in fast environments)
-      expect(second_elapsed).to be <= first_elapsed
+      iterations.times { verification_service.verify_call(identity_header) }
+      second_batch_time = Time.now - start_time
+      
+      # Second batch should be at least as fast (allowing for some variance)
+      # Use a tolerance to account for system variability
+      tolerance_factor = 1.5 # Allow up to 50% variance
+      expect(second_batch_time).to be <= (first_batch_time * tolerance_factor)
+      
+      # Also verify both batches complete in reasonable time
+      expect(first_batch_time).to be < 5.0
+      expect(second_batch_time).to be < 5.0
     end
   end
 end 

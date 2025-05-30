@@ -16,6 +16,8 @@ module StirShaken
     @cache_mutex = Mutex.new
     @rate_limiter = {}
     @rate_limit_mutex = Mutex.new
+    @cache_stats = { hits: 0, misses: 0, fetches: 0 }
+    @stats_mutex = Mutex.new
 
     class << self
       attr_reader :certificate_cache, :cache_mutex
@@ -39,10 +41,12 @@ module StirShaken
           if !force_refresh && cached_cert && !certificate_expired?(cached_cert[:fetched_at])
             cert = cached_cert[:certificate]
             validate_certificate_pins!(cert, expected_pins) if expected_pins
+            record_cache_hit!
             return cert
           end
 
-          # Fetch certificate from URL
+          # Cache miss - fetch certificate from URL
+          record_cache_miss!
           certificate = download_certificate(url)
           
           # Validate certificate pins if provided
@@ -106,6 +110,7 @@ module StirShaken
       def clear_cache!
         cache_mutex.synchronize do
           certificate_cache.clear
+          @cache_stats = { hits: 0, misses: 0, fetches: 0 }
         end
       end
 
@@ -115,14 +120,39 @@ module StirShaken
       # @return [Hash] cache statistics
       def cache_stats
         cache_mutex.synchronize do
+          total_requests = @cache_stats[:hits] + @cache_stats[:misses]
+          hit_rate = total_requests > 0 ? (@cache_stats[:hits].to_f / total_requests * 100).round(2) : 0.0
+          
           {
             size: certificate_cache.size,
-            entries: certificate_cache.keys
+            entries: certificate_cache.keys,
+            hits: @cache_stats[:hits],
+            misses: @cache_stats[:misses],
+            total_requests: total_requests,
+            hit_rate_percent: hit_rate
           }
         end
       end
 
       private
+
+      def record_cache_hit!
+        @stats_mutex.synchronize do
+          @cache_stats[:hits] += 1
+        end
+      end
+
+      def record_cache_miss!
+        @stats_mutex.synchronize do
+          @cache_stats[:misses] += 1
+        end
+      end
+
+      def record_fetch!
+        @stats_mutex.synchronize do
+          @cache_stats[:fetches] += 1
+        end
+      end
 
       ##
       # Download certificate from URL
@@ -130,6 +160,8 @@ module StirShaken
       # @param url [String] the certificate URL
       # @return [OpenSSL::X509::Certificate] the certificate
       def download_certificate(url)
+        record_fetch!
+        
         begin
           response = HTTParty.get(url, {
             timeout: StirShaken.configuration.http_timeout,
