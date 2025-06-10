@@ -44,4 +44,8 @@ module StirShaken
   ##
   # Error raised when required configuration is missing
   class ConfigurationError < Error; end
+
+  ##
+  # Error raised when diversion reason is invalid
+  class InvalidDiversionReasonError < Error; end
 end 
