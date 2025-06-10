@@ -15,7 +15,7 @@ module StirShaken
     # @param certificate_url [String] URL to the certificate
     # @param certificate [OpenSSL::X509::Certificate] the certificate (optional)
     def initialize(private_key:, certificate_url:, certificate: nil)
-      @private_key = private_key
+      @private_key = validate_private_key!(private_key)
       @certificate_url = certificate_url
       @certificate = certificate
     end
@@ -428,10 +428,19 @@ module StirShaken
     ##
     # Validate the private key
     #
-    # @param key [OpenSSL::PKey::EC] the private key to validate
+    # @param key [OpenSSL::PKey::EC, String] the private key to validate
     # @return [OpenSSL::PKey::EC] the validated key
     # @raise [ConfigurationError] if the key is invalid
     def validate_private_key!(key)
+      # Handle string input by attempting to parse as PEM
+      if key.is_a?(String)
+        begin
+          key = OpenSSL::PKey::EC.new(key)
+        rescue OpenSSL::PKey::ECError, OpenSSL::PKey::PKeyError => e
+          raise ConfigurationError, "Invalid private key format: #{e.message}"
+        end
+      end
+
       unless key.is_a?(OpenSSL::PKey::EC)
         raise ConfigurationError, 'Private key must be an EC key for STIR/SHAKEN'
       end
