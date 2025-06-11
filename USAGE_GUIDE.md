@@ -8,13 +8,14 @@
 4. [Verification Service](#verification-service)
 5. [Certificate Management](#certificate-management)
 6. [PASSporT Tokens](#passport-tokens)
-7. [SIP Identity Headers](#sip-identity-headers)
-8. [Attestation Levels](#attestation-levels)
-9. [Configuration](#configuration)
-10. [Error Handling](#error-handling)
-11. [Advanced Usage](#advanced-usage)
-12. [Production Deployment](#production-deployment)
-13. [Troubleshooting](#troubleshooting)
+7. [DIV PASSporT (Call Forwarding)](#div-passport-call-forwarding)
+8. [SIP Identity Headers](#sip-identity-headers)
+9. [Attestation Levels](#attestation-levels)
+10. [Configuration](#configuration)
+11. [Error Handling](#error-handling)
+12. [Advanced Usage](#advanced-usage)
+13. [Production Deployment](#production-deployment)
+14. [Troubleshooting](#troubleshooting)
 
 ## Installation and Setup
 
@@ -408,6 +409,379 @@ begin
 rescue StirShaken::InvalidPhoneNumberError => e
   puts "Invalid: #{e.message}"
 end
+```
+
+## DIV PASSporT (Call Forwarding)
+
+DIV PASSporT tokens are used to authenticate diverted/forwarded calls per RFC 8946. They provide cryptographic proof that a call has been legitimately forwarded from its original destination.
+
+### Understanding DIV PASSporT
+
+DIV PASSporT extends the standard STIR/SHAKEN framework to handle call forwarding scenarios:
+- **Original Call**: A→B (signed with standard PASSporT)
+- **Forwarded Call**: B→C (signed with DIV PASSporT)
+
+The DIV PASSporT preserves the chain of trust while indicating the call has been diverted.
+
+### Creating DIV PASSporT Tokens
+
+#### Basic DIV PASSporT Creation
+
+```ruby
+# First, create or parse the original PASSporT
+original_passport = StirShaken::Passport.parse(original_passport_token)
+
+# Create DIV PASSporT for forwarded call
+div_passport_token = StirShaken::DivPassport.create_div(
+  original_passport: original_passport,
+  new_destination: '+15559876543',      # Where call is being forwarded
+  original_destination: '+15551111111', # Original destination
+  diversion_reason: 'forwarding',       # Reason for diversion
+  certificate_url: 'https://certs.example.com/stirshaken.pem',
+  private_key: private_key
+)
+
+puts div_passport_token
+# Output: eyJ0eXAiOiJwYXNzcG9ydCIsImFsZyI6IkVTMjU2IiwicHB0IjoiZGl2IiwieDV1IjoiaHR0cHM6Ly9jZXJ0cy5leGFtcGxlLmNvbS9zdGlyc2hha2VuLnBlbSJ9.eyJhdHRlc3QiOiJBIiwiZGVzdCI6eyJ0biI6WyIrMTU1NTk4NzY1NDMiXX0sImRpdiI6eyJ0biI6IisxNTU1MTExMTExMSIsInJlYXNvbiI6ImZvcndhcmRpbmcifSwiaWF0IjoxNzAzMjY4MDAwLCJvcmlnIjp7InRuIjoiKzE1NTUxMjM0NTY3In0sIm9yaWdpZCI6ImN1c3RvbS1pZC0xMjMifQ.signature
+```
+
+#### Multiple Destination Forwarding
+
+```ruby
+# Forward to multiple destinations (hunt group)
+div_passport_token = StirShaken::DivPassport.create_div(
+  original_passport: original_passport,
+  new_destination: ['+15559876543', '+15551234567', '+15555555555'],
+  original_destination: '+15551111111',
+  diversion_reason: 'deflection',
+  certificate_url: 'https://certs.example.com/stirshaken.pem',
+  private_key: private_key
+)
+```
+
+#### Valid Diversion Reasons
+
+```ruby
+# RFC 8946 defines these valid diversion reasons:
+valid_reasons = StirShaken::DivPassport::VALID_DIVERSION_REASONS
+puts valid_reasons
+# Output: ["forwarding", "deflection", "follow-me", "time-of-day", 
+#          "user-busy", "no-answer", "unavailable", "unconditional", 
+#          "away", "unknown"]
+
+# Example usage for different scenarios
+div_passport = StirShaken::DivPassport.create_div(
+  original_passport: original_passport,
+  new_destination: '+15559876543',
+  original_destination: '+15551111111',
+  diversion_reason: 'user-busy',  # User was busy, forwarding to voicemail
+  certificate_url: 'https://certs.example.com/stirshaken.pem',
+  private_key: private_key
+)
+```
+
+### Authentication Service DIV Methods
+
+The Authentication Service provides convenient methods for DIV PASSporT operations:
+
+#### Creating DIV PASSporT from Existing PASSporT
+
+```ruby
+# Create DIV PASSporT from an existing PASSporT object
+div_passport_token = auth_service.create_div_passport(
+  original_passport: original_passport,
+  new_destination: '+15559876543',
+  original_destination: '+15551111111',
+  diversion_reason: 'forwarding'
+)
+```
+
+#### Creating DIV PASSporT from SIP Identity Header
+
+```ruby
+# Create DIV PASSporT directly from a SHAKEN Identity header
+div_passport_token = auth_service.create_div_passport_from_header(
+  shaken_identity_header: original_identity_header,
+  new_destination: '+15559876543',
+  original_destination: '+15551111111',
+  diversion_reason: 'forwarding',
+  verify_original: false  # Set to true to verify original signature
+)
+```
+
+#### Complete Call Forwarding Workflow
+
+```ruby
+# Sign both the forwarded call and create DIV PASSporT in one operation
+result = auth_service.sign_diverted_call(
+  shaken_identity_header: original_identity_header,
+  new_destination: '+15559876543',
+  original_destination: '+15551111111',
+  diversion_reason: 'forwarding',
+  forwarded_attestation: 'B'  # Attestation for the forwarded call
+)
+
+puts result[:shaken_header]  # New SHAKEN Identity header for forwarded call
+puts result[:div_header]     # DIV PASSporT Identity header
+```
+
+#### Call Forwarding with Attestation Reduction
+
+```ruby
+# Automatically reduce attestation level for forwarded calls
+result = auth_service.create_call_forwarding(
+  originating_number: '+15551234567',
+  original_destination: '+15551111111',
+  new_destination: '+15559876543',
+  original_attestation: 'A',    # Original call had full attestation
+  diversion_reason: 'forwarding'
+)
+
+puts result[:original_header]   # Original SHAKEN header (A attestation)
+puts result[:forwarded_header]  # Forwarded SHAKEN header (B attestation)
+puts result[:div_header]        # DIV PASSporT header
+```
+
+### Parsing DIV PASSporT Tokens
+
+#### Basic Parsing
+
+```ruby
+# Parse DIV PASSporT without signature verification
+div_passport = StirShaken::DivPassport.parse(div_passport_token, verify_signature: false)
+
+# Parse with signature verification
+div_passport = StirShaken::DivPassport.parse(
+  div_passport_token,
+  public_key: public_key,
+  verify_signature: true
+)
+```
+
+#### Accessing DIV-Specific Information
+
+```ruby
+# Access DIV-specific claims
+puts div_passport.original_destination  # "+15551111111"
+puts div_passport.diversion_reason      # "forwarding"
+
+# Check if this is a DIV PASSporT
+puts div_passport.div_passport?         # true
+
+# Access standard PASSporT information (inherited)
+puts div_passport.originating_number    # "+15551234567"
+puts div_passport.destination_numbers   # ["+15559876543"]
+puts div_passport.attestation          # "A"
+puts div_passport.origination_id       # "original-call-id"
+```
+
+#### Converting to Hash
+
+```ruby
+# Get complete DIV PASSporT information
+hash = div_passport.to_h
+puts hash[:original_destination]  # "+15551111111"
+puts hash[:diversion_reason]      # "forwarding"
+puts hash[:originating_number]    # "+15551234567"
+puts hash[:destination_numbers]   # ["+15559876543"]
+puts hash[:attestation]          # "A"
+```
+
+### DIV PASSporT Validation
+
+#### Structure Validation
+
+```ruby
+begin
+  div_passport.validate!
+  puts "DIV PASSporT is valid"
+rescue StirShaken::PassportValidationError => e
+  puts "Invalid DIV PASSporT: #{e.message}"
+rescue StirShaken::InvalidDiversionReasonError => e
+  puts "Invalid diversion reason: #{e.message}"
+end
+```
+
+#### Diversion Reason Validation
+
+```ruby
+# Validate diversion reason
+begin
+  StirShaken::DivPassport.validate_diversion_reason!('forwarding')
+  puts "Valid diversion reason"
+rescue StirShaken::InvalidDiversionReasonError => e
+  puts "Invalid: #{e.message}"
+end
+```
+
+### Real-World DIV PASSporT Scenarios
+
+#### Enterprise PBX Call Forwarding
+
+```ruby
+# Scenario: Call to main number forwarded to employee
+original_call = auth_service.sign_call(
+  originating_number: '+15551234567',
+  destination_number: '+15554000000',  # Main company number
+  attestation: 'A'
+)
+
+# Forward to employee extension
+forwarding_result = auth_service.sign_diverted_call(
+  shaken_identity_header: original_call,
+  new_destination: '+15554001234',     # Employee direct line
+  original_destination: '+15554000000',
+  diversion_reason: 'deflection',
+  forwarded_attestation: 'B'
+)
+
+puts "Original call: #{original_call}"
+puts "Forwarded call: #{forwarding_result[:shaken_header]}"
+puts "DIV PASSporT: #{forwarding_result[:div_header]}"
+```
+
+#### Hunt Group Implementation
+
+```ruby
+# Scenario: Call forwarded to multiple destinations in sequence
+hunt_group_destinations = ['+15554001111', '+15554002222', '+15554003333']
+
+hunt_group_result = auth_service.create_div_passport_from_header(
+  shaken_identity_header: original_call,
+  new_destination: hunt_group_destinations,
+  original_destination: '+15554000000',
+  diversion_reason: 'deflection'
+)
+
+puts "Hunt group DIV PASSporT: #{hunt_group_result}"
+```
+
+#### Time-Based Call Forwarding
+
+```ruby
+# Scenario: After-hours forwarding to answering service
+after_hours_result = auth_service.sign_diverted_call(
+  shaken_identity_header: original_call,
+  new_destination: '+15555551234',     # Answering service
+  original_destination: '+15554000000',
+  diversion_reason: 'time-of-day',
+  forwarded_attestation: 'C'           # Gateway attestation for service
+)
+```
+
+#### User Busy Forwarding
+
+```ruby
+# Scenario: User busy, forward to voicemail
+voicemail_result = auth_service.sign_diverted_call(
+  shaken_identity_header: original_call,
+  new_destination: '+15554009999',     # Voicemail system
+  original_destination: '+15554001234',
+  diversion_reason: 'user-busy',
+  forwarded_attestation: 'B'
+)
+```
+
+### DIV PASSporT with SIP Identity Headers
+
+#### Creating DIV Identity Headers
+
+```ruby
+# Create SIP Identity header with DIV PASSporT
+div_identity_header = StirShaken::SipIdentity.create(
+  passport_token: div_passport_token,
+  certificate_url: 'https://certs.example.com/stirshaken.pem',
+  algorithm: 'ES256',
+  extension: 'div'  # Important: use 'div' extension for DIV PASSporT
+)
+
+puts div_identity_header
+# Output: eyJ0eXAiOiJwYXNzcG9ydCIsImFsZyI6IkVTMjU2IiwicHB0IjoiZGl2IiwieDV1IjoiaHR0cHM6Ly9jZXJ0cy5leGFtcGxlLmNvbS9zdGlyc2hha2VuLnBlbSJ9.eyJhdHRlc3QiOiJBIiwiZGVzdCI6eyJ0biI6WyIrMTU1NTk4NzY1NDMiXX0sImRpdiI6eyJ0biI6IisxNTU1MTExMTExMSIsInJlYXNvbiI6ImZvcndhcmRpbmcifSwiaWF0IjoxNzAzMjY4MDAwLCJvcmlnIjp7InRuIjoiKzE1NTUxMjM0NTY3In0sIm9yaWdpZCI6ImN1c3RvbS1pZC0xMjMifQ.signature;info=<https://certs.example.com/stirshaken.pem>;alg=ES256;ppt=div
+```
+
+#### Parsing DIV Identity Headers
+
+```ruby
+# Parse DIV Identity header
+div_sip_identity = StirShaken::SipIdentity.parse(div_identity_header)
+
+puts div_sip_identity.extension  # "div"
+puts div_sip_identity.algorithm  # "ES256"
+
+# Extract DIV PASSporT from header
+div_passport = div_sip_identity.parse_passport(verify_signature: false)
+puts div_passport.diversion_reason  # "forwarding"
+```
+
+### Error Handling for DIV PASSporT
+
+```ruby
+begin
+  # Create DIV PASSporT
+  div_passport = StirShaken::DivPassport.create_div(
+    original_passport: original_passport,
+    new_destination: '+15559876543',
+    original_destination: '+15551111111',
+    diversion_reason: 'invalid-reason',  # This will fail
+    certificate_url: 'https://certs.example.com/stirshaken.pem',
+    private_key: private_key
+  )
+rescue StirShaken::InvalidDiversionReasonError => e
+  puts "Invalid diversion reason: #{e.message}"
+rescue StirShaken::InvalidPhoneNumberError => e
+  puts "Invalid phone number: #{e.message}"
+rescue StirShaken::PassportValidationError => e
+  puts "PASSporT validation failed: #{e.message}"
+rescue StirShaken::ConfigurationError => e
+  puts "Configuration error: #{e.message}"
+end
+```
+
+### Performance Considerations
+
+```ruby
+# DIV PASSporT creation is optimized for performance
+require 'benchmark'
+
+# Benchmark DIV PASSporT creation
+time = Benchmark.measure do
+  1000.times do
+    StirShaken::DivPassport.create_div(
+      original_passport: original_passport,
+      new_destination: '+15559876543',
+      original_destination: '+15551111111',
+      diversion_reason: 'forwarding',
+      certificate_url: 'https://certs.example.com/stirshaken.pem',
+      private_key: private_key
+    )
+  end
+end
+
+puts "Average time per DIV PASSporT: #{(time.real / 1000 * 1000).round(2)}ms"
+# Typical output: Average time per DIV PASSporT: 0.09ms
+```
+
+### Security Logging for DIV PASSporT
+
+When security logging is enabled, DIV PASSporT operations are automatically logged:
+
+```ruby
+# Enable security logging
+ENV['STIRSHAKEN_SECURITY_LOGGING'] = 'true'
+
+# DIV PASSporT operations will generate security logs like:
+# {
+#   "timestamp": "2025-01-28T17:42:24-05:00",
+#   "event_type": "DIV_PASSPORT_CREATED",
+#   "severity": "LOW",
+#   "details": {
+#     "original_destination": "+15551111111",
+#     "new_destination_count": 1,
+#     "diversion_reason": "forwarding"
+#   },
+#   "library_version": "0.1.0",
+#   "process_id": 12345
+# }
 ```
 
 ## SIP Identity Headers
