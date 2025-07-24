@@ -618,6 +618,439 @@ end
 
 puts "    ✓ Configuration restored"
 
+# Example 13: DIV PASSporT Call Forwarding Integration
+puts "\n13. DIV PASSPORT CALL FORWARDING INTEGRATION"
+puts "-" * 40
+
+puts "✓ DIV PASSporT call forwarding scenarios:"
+
+# Scenario 1: Basic Call Forwarding
+puts "\n  Scenario 1: Basic Call Forwarding"
+puts "  " + "-" * 35
+
+# Original call A→B
+original_call = auth_service.sign_call(
+  originating_number: '+15551234567',
+  destination_number: '+15551111111',
+  attestation: 'A',
+  origination_id: 'forwarding-demo-001'
+)
+
+puts "    Original call: +15551234567 → +15551111111 (A attestation)"
+
+# B forwards to C using DIV PASSporT
+div_result = auth_service.sign_diverted_call(
+  shaken_identity_header: original_call,
+  new_destination: '+15559876543',
+  original_destination: '+15551111111',
+  diversion_reason: 'forwarding'
+)
+
+# Create forwarded SHAKEN header with reduced attestation
+forwarded_call = auth_service.sign_call(
+  originating_number: '+15551234567',
+  destination_number: '+15559876543',
+  attestation: 'B', # Reduced attestation due to forwarding
+  origination_id: 'forwarding-demo-001'
+)
+
+puts "    Forwarded call: +15551234567 → +15559876543 (B attestation)"
+puts "    DIV PASSporT created for forwarding authentication"
+
+# Verify both the forwarded call and DIV PASSporT
+forwarded_verification = verification_service.verify_call(forwarded_call)
+div_verification = verification_service.verify_call(div_result[:div_header])
+
+puts "    Forwarded call verification: #{forwarded_verification.valid? ? '✓ VALID' : '✗ INVALID'}"
+puts "    DIV PASSporT verification: #{div_verification.valid? ? '✓ VALID' : '✗ INVALID'}"
+
+# Parse DIV PASSporT to show details
+div_passport = StirShaken::DivPassport.parse(
+  StirShaken::SipIdentity.parse(div_result[:div_header]).passport_token,
+  verify_signature: false
+)
+
+puts "    DIV Details:"
+puts "      Original destination: #{div_passport.original_destination}"
+puts "      New destination: #{div_passport.destination_numbers.join(', ')}"
+puts "      Diversion reason: #{div_passport.diversion_reason}"
+puts "      Preserved originating number: #{div_passport.originating_number}"
+
+# Scenario 2: Enterprise PBX Call Deflection
+puts "\n  Scenario 2: Enterprise PBX Call Deflection"
+puts "  " + "-" * 40
+
+# Call to main company number
+company_call = auth_service.sign_call(
+  originating_number: '+15551234567',
+  destination_number: '+15554000000', # Main company number
+  attestation: 'A',
+  origination_id: 'enterprise-pbx-001'
+)
+
+puts "    Incoming call: +15551234567 → +15554000000 (Main number)"
+
+# PBX deflects to employee extension using complete call forwarding
+pbx_deflection = auth_service.create_call_forwarding(
+  original_call_info: {
+    originating_number: '+15551234567',
+    destination_number: '+15554000000',
+    attestation: 'A',
+    origination_id: 'enterprise-pbx-001',
+    identity_header: company_call
+  },
+  forwarding_info: {
+    new_destination: '+15554001234',
+    reason: 'deflection',
+    attestation: 'B'
+  }
+)
+
+puts "    PBX deflection: +15551234567 → +15554001234 (Employee ext)"
+
+# Verify enterprise call flow
+enterprise_verification = verification_service.verify_call(pbx_deflection[:forwarded_shaken_header])
+enterprise_div_verification = verification_service.verify_call(pbx_deflection[:div_header])
+
+puts "    Enterprise call verification: #{enterprise_verification.valid? ? '✓ VALID' : '✗ INVALID'}"
+puts "    Enterprise DIV verification: #{enterprise_div_verification.valid? ? '✓ VALID' : '✗ INVALID'}"
+
+# Scenario 3: Hunt Group Implementation
+puts "\n  Scenario 3: Hunt Group Implementation"
+puts "  " + "-" * 36
+
+# Call to hunt group pilot number
+hunt_group_call = auth_service.sign_call(
+  originating_number: '+15551234567',
+  destination_number: '+15555000000', # Hunt group pilot
+  attestation: 'A',
+  origination_id: 'hunt-group-001'
+)
+
+puts "    Hunt group call: +15551234567 → +15555000000 (Pilot number)"
+
+# Hunt group tries multiple destinations
+hunt_destinations = ['+15555001111', '+15555002222', '+15555003333']
+
+hunt_group_div = auth_service.create_div_passport_from_header(
+  shaken_identity_header: hunt_group_call,
+  new_destination: hunt_destinations,
+  original_destination: '+15555000000',
+  diversion_reason: 'deflection'
+)
+
+puts "    Hunt group destinations: #{hunt_destinations.join(', ')}"
+
+# Create SIP Identity header for hunt group DIV
+hunt_div_header = StirShaken::SipIdentity.create(
+  passport_token: hunt_group_div,
+  certificate_url: 'https://origin-telecom.com/cert.pem',
+  algorithm: 'ES256',
+  extension: 'div'
+)
+
+hunt_div_verification = verification_service.verify_call(hunt_div_header)
+puts "    Hunt group DIV verification: #{hunt_div_verification.valid? ? '✓ VALID' : '✗ INVALID'}"
+
+# Parse hunt group DIV to show multiple destinations
+hunt_div_passport = StirShaken::DivPassport.parse(hunt_group_div, verify_signature: false)
+puts "    Hunt group details:"
+puts "      Original pilot: #{hunt_div_passport.original_destination}"
+puts "      Target count: #{hunt_div_passport.destination_numbers.length}"
+puts "      Targets: #{hunt_div_passport.destination_numbers.join(', ')}"
+
+# Scenario 4: Time-Based Call Forwarding
+puts "\n  Scenario 4: Time-Based Call Forwarding"
+puts "  " + "-" * 37
+
+# Simulate after-hours call
+after_hours_call = auth_service.sign_call(
+  originating_number: '+15551234567',
+  destination_number: '+15556000000', # Business number
+  attestation: 'A',
+  origination_id: 'after-hours-001'
+)
+
+puts "    After-hours call: +15551234567 → +15556000000 (Business)"
+
+# Forward to answering service
+after_hours_forward = auth_service.sign_diverted_call(
+  shaken_identity_header: after_hours_call,
+  new_destination: '+15556999999', # Answering service
+  original_destination: '+15556000000',
+  diversion_reason: 'time-of-day'
+)
+
+# Create forwarded call with gateway attestation
+forwarded_answering_call = auth_service.sign_call(
+  originating_number: '+15551234567',
+  destination_number: '+15556999999',
+  attestation: 'C', # Gateway attestation for service
+  origination_id: 'after-hours-001'
+)
+
+puts "    Time-based forward: +15551234567 → +15556999999 (Answering service)"
+
+after_hours_verification = verification_service.verify_call(forwarded_answering_call)
+after_hours_div_verification = verification_service.verify_call(after_hours_forward[:div_header])
+
+puts "    After-hours verification: #{after_hours_verification.valid? ? '✓ VALID' : '✗ INVALID'}"
+puts "    Time-based DIV verification: #{after_hours_div_verification.valid? ? '✓ VALID' : '✗ INVALID'}"
+
+# Scenario 5: User Busy Forwarding to Voicemail
+puts "\n  Scenario 5: User Busy Forwarding to Voicemail"
+puts "  " + "-" * 44
+
+# Call to user who is busy
+busy_user_call = auth_service.sign_call(
+  originating_number: '+15551234567',
+  destination_number: '+15557001234', # User's direct line
+  attestation: 'A',
+  origination_id: 'user-busy-001'
+)
+
+puts "    Call to busy user: +15551234567 → +15557001234"
+
+# Forward to voicemail system
+voicemail_forward = auth_service.sign_diverted_call(
+  shaken_identity_header: busy_user_call,
+  new_destination: '+15557009999', # Voicemail system
+  original_destination: '+15557001234',
+  diversion_reason: 'user-busy'
+)
+
+# Create forwarded call to voicemail
+forwarded_voicemail_call = auth_service.sign_call(
+  originating_number: '+15551234567',
+  destination_number: '+15557009999',
+  attestation: 'B', # Reduced attestation for forwarding
+  origination_id: 'user-busy-001'
+)
+
+puts "    Voicemail forward: +15551234567 → +15557009999 (Voicemail)"
+
+voicemail_verification = verification_service.verify_call(forwarded_voicemail_call)
+voicemail_div_verification = verification_service.verify_call(voicemail_forward[:div_header])
+
+puts "    Voicemail verification: #{voicemail_verification.valid? ? '✓ VALID' : '✗ INVALID'}"
+puts "    User-busy DIV verification: #{voicemail_div_verification.valid? ? '✓ VALID' : '✗ INVALID'}"
+
+# Scenario 6: Multiple Forwarding Hops with Attestation Degradation
+puts "\n  Scenario 6: Multiple Forwarding Hops"
+puts "  " + "-" * 34
+
+# Original call with A attestation
+multi_hop_original = auth_service.sign_call(
+  originating_number: '+15551234567',
+  destination_number: '+15558001111',
+  attestation: 'A',
+  origination_id: 'multi-hop-001'
+)
+
+puts "    Original: +15551234567 → +15558001111 (A attestation)"
+
+# First hop: A→B attestation
+first_hop_div = auth_service.sign_diverted_call(
+  shaken_identity_header: multi_hop_original,
+  new_destination: '+15558002222',
+  original_destination: '+15558001111',
+  diversion_reason: 'follow-me'
+)
+
+first_hop_call = auth_service.sign_call(
+  originating_number: '+15551234567',
+  destination_number: '+15558002222',
+  attestation: 'B', # Reduced attestation
+  origination_id: 'multi-hop-001'
+)
+
+puts "    First hop: +15551234567 → +15558002222 (B attestation)"
+
+# Second hop: B→C attestation
+second_hop_div = auth_service.sign_diverted_call(
+  shaken_identity_header: first_hop_call,
+  new_destination: '+15558003333',
+  original_destination: '+15558002222',
+  diversion_reason: 'follow-me'
+)
+
+second_hop_call = auth_service.sign_call(
+  originating_number: '+15551234567',
+  destination_number: '+15558003333',
+  attestation: 'C', # Further reduced attestation
+  origination_id: 'multi-hop-001'
+)
+
+puts "    Second hop: +15551234567 → +15558003333 (C attestation)"
+
+# Verify attestation degradation
+original_verification = verification_service.verify_call(multi_hop_original)
+first_hop_verification = verification_service.verify_call(first_hop_call)
+second_hop_verification = verification_service.verify_call(second_hop_call)
+
+puts "    Attestation progression:"
+puts "      Original: #{original_verification.attestation} (#{original_verification.confidence_level}%)"
+puts "      First hop: #{first_hop_verification.attestation} (#{first_hop_verification.confidence_level}%)"
+puts "      Second hop: #{second_hop_verification.attestation} (#{second_hop_verification.confidence_level}%)"
+
+# Scenario 7: DIV PASSporT Performance Testing
+puts "\n  Scenario 7: DIV PASSporT Performance Testing"
+puts "  " + "-" * 43
+
+div_performance_calls = 50
+div_creation_times = []
+div_verification_times = []
+
+puts "    Testing DIV PASSporT performance with #{div_performance_calls} calls..."
+
+# Create base call for forwarding
+base_call = auth_service.sign_call(
+  originating_number: '+15551234567',
+  destination_number: '+15559000000',
+  attestation: 'A',
+  origination_id: 'perf-test-base'
+)
+
+div_performance_calls.times do |i|
+  # Time DIV PASSporT creation
+  creation_start = Time.now
+  div_result = auth_service.sign_diverted_call(
+    shaken_identity_header: base_call,
+    new_destination: "+155590#{i.to_s.rjust(5, '0')}",
+    original_destination: '+15559000000',
+    diversion_reason: 'forwarding'
+  )
+  div_creation_times << (Time.now - creation_start)
+  
+  # Time DIV PASSporT verification
+  verification_start = Time.now
+  verification_service.verify_call(div_result[:div_header])
+  div_verification_times << (Time.now - verification_start)
+end
+
+avg_creation_time = (div_creation_times.sum / div_creation_times.length * 1000).round(3)
+avg_verification_time = (div_verification_times.sum / div_verification_times.length * 1000).round(3)
+
+puts "    DIV PASSporT performance results:"
+puts "      Average creation time: #{avg_creation_time}ms"
+puts "      Average verification time: #{avg_verification_time}ms"
+puts "      Total operations: #{div_performance_calls * 2} (creation + verification)"
+puts "      Performance rating: #{avg_creation_time < 1.0 ? 'EXCELLENT' : avg_creation_time < 5.0 ? 'GOOD' : 'ACCEPTABLE'}"
+
+# Scenario 8: DIV PASSporT Error Handling
+puts "\n  Scenario 8: DIV PASSporT Error Handling"
+puts "  " + "-" * 39
+
+puts "    Testing DIV PASSporT error scenarios:"
+
+# Test invalid diversion reasons
+invalid_reasons = ['invalid-reason', 'spam', 'telemarketing', '']
+invalid_reasons.each_with_index do |reason, index|
+  begin
+    auth_service.create_div_passport_from_header(
+      shaken_identity_header: base_call,
+      new_destination: '+15559876543',
+      original_destination: '+15559000000',
+      diversion_reason: reason
+    )
+    puts "      Test #{index + 1} (#{reason}): UNEXPECTED SUCCESS"
+  rescue StirShaken::InvalidDiversionReasonError => e
+    puts "      Test #{index + 1} (#{reason}): ✓ Correctly rejected"
+  rescue => e
+    puts "      Test #{index + 1} (#{reason}): ✓ Error handled: #{e.class.name}"
+  end
+end
+
+# Test invalid phone numbers in DIV context
+invalid_numbers = ['invalid', '+', '123', '+0123456789']
+invalid_numbers.each_with_index do |number, index|
+  begin
+    auth_service.create_div_passport_from_header(
+      shaken_identity_header: base_call,
+      new_destination: number,
+      original_destination: '+15559000000',
+      diversion_reason: 'forwarding'
+    )
+    puts "      Phone test #{index + 1} (#{number}): UNEXPECTED SUCCESS"
+  rescue StirShaken::InvalidPhoneNumberError => e
+    puts "      Phone test #{index + 1} (#{number}): ✓ Correctly rejected"
+  rescue => e
+    puts "      Phone test #{index + 1} (#{number}): ✓ Error handled: #{e.class.name}"
+  end
+end
+
+# Scenario 9: DIV PASSporT Integration with Call Analytics
+puts "\n  Scenario 9: DIV PASSporT Call Analytics Integration"
+puts "  " + "-" * 48
+
+puts "    Collecting DIV PASSporT analytics data:"
+
+# Create sample forwarded call for analytics
+analytics_call = auth_service.sign_call(
+  originating_number: '+15551234567',
+  destination_number: '+15559100000',
+  attestation: 'A',
+  origination_id: 'analytics-div-001'
+)
+
+analytics_div_result = auth_service.sign_diverted_call(
+  shaken_identity_header: analytics_call,
+  new_destination: '+15559876543',
+  original_destination: '+15559100000',
+  diversion_reason: 'forwarding'
+)
+
+# Parse DIV PASSporT for analytics
+analytics_div_passport = StirShaken::DivPassport.parse(
+  StirShaken::SipIdentity.parse(analytics_div_result[:div_header]).passport_token,
+  verify_signature: false
+)
+
+# Collect comprehensive analytics
+div_analytics = {
+  call_id: 'analytics-div-001',
+  timestamp: Time.now,
+  call_type: 'FORWARDED',
+  original_caller: analytics_div_passport.originating_number,
+  original_destination: analytics_div_passport.original_destination,
+  final_destination: analytics_div_passport.destination_numbers.first,
+  diversion_reason: analytics_div_passport.diversion_reason,
+  original_attestation: 'A',
+  forwarded_attestation: 'B',
+  div_passport_present: true,
+  forwarding_chain_length: 1,
+  verification_status: 'VERIFIED'
+}
+
+puts "    DIV PASSporT analytics collected:"
+div_analytics.each do |key, value|
+  puts "      #{key}: #{value}"
+end
+
+# Scenario 10: DIV PASSporT Fraud Detection
+puts "\n  Scenario 10: DIV PASSporT Fraud Detection"
+puts "  " + "-" * 41
+
+puts "    DIV PASSporT fraud detection analysis:"
+
+# Analyze forwarding patterns for fraud indicators
+fraud_analysis = {
+  excessive_forwarding: analytics_div_passport.destination_numbers.length > 3,
+  suspicious_reason: !['forwarding', 'deflection', 'follow-me', 'user-busy', 'no-answer'].include?(analytics_div_passport.diversion_reason),
+  attestation_degradation: true, # A→B is normal
+  international_forward: analytics_div_passport.destination_numbers.any? { |num| !num.start_with?('+1') },
+  rapid_forwarding: false # Would check timestamp differences in real implementation
+}
+
+fraud_indicators = fraud_analysis.select { |_, value| value }.keys
+fraud_score = fraud_indicators.length * 20 # 20 points per indicator
+
+puts "    Fraud analysis results:"
+puts "      Indicators found: #{fraud_indicators.any? ? fraud_indicators.join(', ') : 'None'}"
+puts "      Fraud score: #{fraud_score}/100"
+puts "      Risk level: #{fraud_score > 60 ? 'HIGH' : fraud_score > 40 ? 'MEDIUM' : 'LOW'}"
+puts "      Recommended action: #{fraud_score > 60 ? 'BLOCK' : fraud_score > 40 ? 'MONITOR' : 'ALLOW'}"
+
 puts "\n" + "=" * 70
 puts "Integration Examples Completed!"
 puts ""
@@ -634,5 +1067,9 @@ puts "• Error recovery and system resilience"
 puts "• Real-world integration patterns (SIP proxy, analytics, fraud detection)"
 puts "• System monitoring and alerting"
 puts "• Configuration management"
+puts "• DIV PASSporT call forwarding integration (RFC 8946)"
+puts "• Enterprise PBX and hunt group scenarios"
+puts "• DIV PASSporT performance testing and error handling"
+puts "• Call analytics and fraud detection for forwarded calls"
 puts ""
 puts "The STIR/SHAKEN library is production-ready for enterprise deployment!" 

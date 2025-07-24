@@ -54,11 +54,13 @@ RSpec.describe StirShaken do
   describe 'module structure' do
     it 'defines all required classes' do
       expect(defined?(StirShaken::Passport)).to be_truthy
+      expect(defined?(StirShaken::DivPassport)).to be_truthy
       expect(defined?(StirShaken::AuthenticationService)).to be_truthy
       expect(defined?(StirShaken::VerificationService)).to be_truthy
       expect(defined?(StirShaken::CertificateManager)).to be_truthy
       expect(defined?(StirShaken::SipIdentity)).to be_truthy
       expect(defined?(StirShaken::Attestation)).to be_truthy
+      expect(defined?(StirShaken::SecurityLogger)).to be_truthy
     end
 
     it 'defines all error classes' do
@@ -73,6 +75,7 @@ RSpec.describe StirShaken do
       expect(defined?(StirShaken::InvalidIdentityHeaderError)).to be_truthy
       expect(defined?(StirShaken::InvalidTokenError)).to be_truthy
       expect(defined?(StirShaken::ConfigurationError)).to be_truthy
+      expect(defined?(StirShaken::InvalidDiversionReasonError)).to be_truthy
     end
 
     it 'has proper error inheritance' do
@@ -81,6 +84,7 @@ RSpec.describe StirShaken do
       expect(StirShaken::CertificateFetchError.superclass).to eq(StirShaken::CertificateError)
       expect(StirShaken::CertificateValidationError.superclass).to eq(StirShaken::CertificateError)
       expect(StirShaken::SignatureVerificationError.superclass).to eq(StirShaken::Error)
+      expect(StirShaken::InvalidDiversionReasonError.superclass).to eq(StirShaken::Error)
       expect(StirShaken::Error.superclass).to eq(StandardError)
     end
   end
