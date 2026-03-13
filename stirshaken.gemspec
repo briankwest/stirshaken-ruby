@@ -8,7 +8,7 @@ Gem::Specification.new do |spec|
   spec.description   = "A comprehensive Ruby library implementing STIR (Secure Telephone Identity Revisited) and SHAKEN (Signature-based Handling of Asserted information using toKENs) protocols for combating caller ID spoofing in telecommunications."
   spec.homepage      = "https://github.com/signalwire/stirshaken-ruby"
   spec.license       = "MIT"
-  spec.required_ruby_version = ">= 3.0.0"
+  spec.required_ruby_version = ">= 3.2.0"
 
   spec.metadata["homepage_uri"] = spec.homepage
   spec.metadata["source_code_uri"] = "https://github.com/signalwire/stirshaken-ruby"
