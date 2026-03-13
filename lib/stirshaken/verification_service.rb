@@ -46,7 +46,7 @@ module StirShaken
     # @param destination_number [String] expected destination number (optional)
     # @param max_age [Integer] maximum age of token in seconds (default: 60)
     # @return [VerificationResult] verification result
-    def verify_call(identity_header, originating_number: nil, destination_number: nil, max_age: 60)
+    def verify_call(identity_header, originating_number: nil, destination_number: nil, max_age: StirShaken.configuration.default_max_age)
       @verification_stats[:total_verifications] += 1
       
       # Handle nil or empty input
@@ -201,12 +201,15 @@ module StirShaken
     # @param certificate_url [String] URL to the certificate
     # @param max_age [Integer] maximum age of token in seconds (default: 60)
     # @return [VerificationResult] verification result
-    def verify_passport(passport_token, certificate_url, max_age: 60)
+    def verify_passport(passport_token, certificate_url, max_age: StirShaken.configuration.default_max_age)
+      @verification_stats[:total_verifications] += 1
+
       begin
         # Fetch certificate
         certificate = CertificateManager.fetch_certificate(certificate_url)
-        
+
         unless CertificateManager.validate_certificate(certificate)
+          @verification_stats[:failed_verifications] += 1
           return VerificationResult.new(
             valid: false,
             reason: 'Certificate validation failed',
@@ -222,6 +225,7 @@ module StirShaken
 
         # Check token age
         if passport.expired?(max_age: max_age)
+          @verification_stats[:failed_verifications] += 1
           return VerificationResult.new(
             valid: false,
             passport: passport,
@@ -233,8 +237,9 @@ module StirShaken
         end
 
         # Check certificate authorization
-        if passport.originating_number && 
+        if passport.originating_number &&
            !CertificateManager.validate_certificate(certificate, telephone_number: passport.originating_number)
+          @verification_stats[:failed_verifications] += 1
           return VerificationResult.new(
             valid: false,
             passport: passport,
@@ -246,6 +251,7 @@ module StirShaken
         end
 
         # Successful verification
+        @verification_stats[:successful_verifications] += 1
         VerificationResult.new(
           valid: true,
           passport: passport,
@@ -256,36 +262,42 @@ module StirShaken
         )
 
       rescue CertificateFetchError => e
+        @verification_stats[:failed_verifications] += 1
         VerificationResult.new(
           valid: false,
           reason: "Certificate fetch failed: #{e.message}",
           confidence_level: 0
         )
       rescue CertificateValidationError => e
+        @verification_stats[:failed_verifications] += 1
         VerificationResult.new(
           valid: false,
           reason: "Certificate validation failed: #{e.message}",
           confidence_level: 0
         )
       rescue InvalidTokenError => e
+        @verification_stats[:failed_verifications] += 1
         VerificationResult.new(
           valid: false,
           reason: "Invalid token format: #{e.message}",
           confidence_level: 0
         )
       rescue SignatureVerificationError, JWT::VerificationError => e
+        @verification_stats[:failed_verifications] += 1
         VerificationResult.new(
           valid: false,
           reason: "Signature verification failed: #{e.message}",
           confidence_level: 0
         )
       rescue PassportValidationError => e
+        @verification_stats[:failed_verifications] += 1
         VerificationResult.new(
           valid: false,
           reason: "PASSporT validation failed: #{e.message}",
           confidence_level: 0
         )
       rescue StandardError => e
+        @verification_stats[:failed_verifications] += 1
         VerificationResult.new(
           valid: false,
           reason: "Verification error: #{e.message}",

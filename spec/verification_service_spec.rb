@@ -263,6 +263,26 @@ RSpec.describe StirShaken::VerificationService do
       expect(result.valid?).to be false
       expect(result.reason).to include('Certificate fetch failed')
     end
+
+    it 'tracks stats for successful verification' do
+      initial_stats = verification_service.stats
+
+      verification_service.verify_passport(passport_token, cert_url)
+
+      updated_stats = verification_service.stats
+      expect(updated_stats[:total_verifications]).to eq(initial_stats[:total_verifications] + 1)
+      expect(updated_stats[:successful_verifications]).to eq(initial_stats[:successful_verifications] + 1)
+    end
+
+    it 'tracks stats for failed verification' do
+      initial_stats = verification_service.stats
+
+      verification_service.verify_passport('invalid-token', cert_url)
+
+      updated_stats = verification_service.stats
+      expect(updated_stats[:total_verifications]).to eq(initial_stats[:total_verifications] + 1)
+      expect(updated_stats[:failed_verifications]).to eq(initial_stats[:failed_verifications] + 1)
+    end
   end
 
   describe '#validate_structure' do
@@ -354,6 +374,32 @@ RSpec.describe StirShaken::VerificationService do
     it 'handles zero verifications' do
       stats = verification_service.stats
       expect(stats[:success_rate]).to eq(0.0)
+    end
+  end
+
+  describe 'configurable default_max_age' do
+    it 'uses configured default_max_age' do
+      StirShaken.configure { |c| c.default_max_age = 120 }
+
+      # Create a token 90 seconds old — should pass with max_age=120 but fail with max_age=60
+      old_payload = {
+        'attest' => 'A',
+        'dest' => { 'tn' => ['+15559876543'] },
+        'iat' => Time.now.to_i - 90,
+        'orig' => { 'tn' => '+15551234567' },
+        'origid' => 'test-id'
+      }
+      old_header = {
+        'alg' => 'ES256', 'typ' => 'passport', 'ppt' => 'shaken', 'x5u' => cert_url
+      }
+      old_token = JWT.encode(old_payload, private_key, 'ES256', old_header)
+      old_identity = StirShaken::SipIdentity.create(
+        passport_token: old_token,
+        certificate_url: cert_url
+      )
+
+      result = verification_service.verify_call(old_identity)
+      expect(result.valid?).to be true
     end
   end
 

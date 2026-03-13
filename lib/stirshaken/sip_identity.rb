@@ -44,8 +44,10 @@ module StirShaken
       params << "alg=#{algorithm}"
       params << "ppt=#{extension}"
       
-      # Add any additional parameters
+      # Add any additional parameters (with header injection protection)
       additional_info.each do |key, value|
+        sanitize_header_param!(key.to_s)
+        sanitize_header_param!(value.to_s)
         params << "#{key}=#{value}"
       end
       
@@ -177,6 +179,17 @@ module StirShaken
     private
 
     ##
+    # Validate a header parameter value is safe from injection
+    #
+    # @param value [String] the parameter key or value
+    # @raise [InvalidIdentityHeaderError] if value contains injection characters
+    def self.sanitize_header_param!(value)
+      if value.match?(/[;\r\n\0]/)
+        raise InvalidIdentityHeaderError, "Header parameter contains illegal characters: #{value.inspect}"
+      end
+    end
+
+    ##
     # Parse parameter string into hash
     #
     # @param parameters_string [String] the parameters string
@@ -229,18 +242,18 @@ module StirShaken
       return false if url.nil? || url.empty?
       
       uri = URI.parse(url)
-      
-      # Must be HTTP or HTTPS
-      return false unless uri.is_a?(URI::HTTP) || uri.is_a?(URI::HTTPS)
-      
-      # Must have a scheme (http/https)
+
+      # RFC 8226 §9 mandates HTTPS for certificate URLs
+      return false unless uri.is_a?(URI::HTTPS)
+
+      # Must have a scheme
       return false if uri.scheme.nil?
-      
+
       # Must have a host
       return false if uri.host.nil? || uri.host.empty?
-      
-      # Scheme must be http or https specifically
-      return false unless ['http', 'https'].include?(uri.scheme.downcase)
+
+      # Scheme must be https specifically
+      return false unless uri.scheme.downcase == 'https'
       
       true
     rescue URI::InvalidURIError

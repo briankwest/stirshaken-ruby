@@ -114,7 +114,7 @@ RSpec.describe StirShaken::SecurityLogger do
       output = $stderr.string
       expect(output).to include('AUTH_SUCCESS')
       expect(output).to include('LOW')
-      expect(output).to include('+15*******4567') # masked phone number
+      expect(output).to include('+1******4567') # masked phone number
       expect(output).to include('"destination_count":2')
       expect(output).to include('"attestation":"A"')
     end
@@ -244,7 +244,7 @@ RSpec.describe StirShaken::SecurityLogger do
       described_class.log_security_event(:authentication_success, details)
       
       output = $stderr.string
-      expect(output).to include('+15******4567')
+      expect(output).to include('+1******4567')
       expect(output).not_to include('+15551234567')
     end
   end
@@ -255,7 +255,7 @@ RSpec.describe StirShaken::SecurityLogger do
       described_class.log_authentication_success('+442071234567', ['+15559876543'], 'A')
       
       output = $stderr.string
-      expect(output).to include('+44********4567')
+      expect(output).to include('+4*******4567')
     end
 
     it 'does not mask short phone numbers' do

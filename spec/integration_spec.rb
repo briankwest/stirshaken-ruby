@@ -179,7 +179,8 @@ RSpec.describe 'STIR/SHAKEN Integration Tests' do
       # Verify cache statistics
       cache_stats = StirShaken::CertificateManager.cache_stats
       expect(cache_stats[:size]).to eq(1)
-      expect(cache_stats[:entries]).to include(cert_url)
+      # Entries are now masked URLs for security
+      expect(cache_stats[:entries].length).to eq(1)
     end
 
     it 'handles certificate fetch failures gracefully' do

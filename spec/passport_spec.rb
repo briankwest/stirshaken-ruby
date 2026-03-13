@@ -373,6 +373,46 @@ RSpec.describe StirShaken::Passport do
       expect(passport.expired?(max_age: 15)).to be true
     end
 
+    it 'returns true for far-future iat (prevents never-expiring tokens)' do
+      passport = StirShaken::Passport.new(
+        header: {
+          'alg' => 'ES256',
+          'typ' => 'passport',
+          'ppt' => 'shaken',
+          'x5u' => certificate_url
+        },
+        payload: {
+          'attest' => attestation,
+          'dest' => { 'tn' => destination_numbers },
+          'iat' => Time.now.to_i + 3600, # 1 hour in the future
+          'orig' => { 'tn' => originating_number },
+          'origid' => 'test-id'
+        }
+      )
+
+      expect(passport.expired?(max_age: 60)).to be true
+    end
+
+    it 'allows small clock skew for iat' do
+      passport = StirShaken::Passport.new(
+        header: {
+          'alg' => 'ES256',
+          'typ' => 'passport',
+          'ppt' => 'shaken',
+          'x5u' => certificate_url
+        },
+        payload: {
+          'attest' => attestation,
+          'dest' => { 'tn' => destination_numbers },
+          'iat' => Time.now.to_i + 30, # 30 seconds in the future (within 60s skew)
+          'orig' => { 'tn' => originating_number },
+          'origid' => 'test-id'
+        }
+      )
+
+      expect(passport.expired?(max_age: 60)).to be false
+    end
+
     it 'returns true when issued_at is missing' do
       passport = StirShaken::Passport.new(
         header: {},

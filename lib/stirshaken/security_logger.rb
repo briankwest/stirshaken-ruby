@@ -129,6 +129,43 @@ module StirShaken
         ENV['STIRSHAKEN_SECURITY_LOGGING'] != 'false'
       end
 
+      ##
+      # Mask URL for logging (keep domain, mask path)
+      #
+      # @param url [String] the URL
+      # @return [String] masked URL
+      def mask_url(url)
+        return url unless url.is_a?(String)
+
+        begin
+          uri = URI.parse(url)
+          port_str = if uri.port && uri.port != uri.default_port
+                       ":#{uri.port}"
+                     else
+                       ''
+                     end
+          "#{uri.scheme}://#{uri.host}#{port_str}/***"
+        rescue URI::InvalidURIError
+          '***'
+        end
+      end
+
+      ##
+      # Mask phone number for logging (keep + and first digit, mask middle, show last 4)
+      #
+      # @param phone_number [String] the phone number
+      # @return [String] masked phone number
+      def mask_phone_number(phone_number)
+        return phone_number unless phone_number.is_a?(String) && phone_number.length > 6
+
+        # Keep '+' plus first digit and last 4 digits, mask everything between
+        prefix = phone_number[0..1] # '+' and first digit
+        last_digits = phone_number[-4..-1]
+        masked_middle = '*' * [phone_number.length - 6, 0].max
+
+        "#{prefix}#{masked_middle}#{last_digits}"
+      end
+
       private
 
       ##
@@ -189,38 +226,6 @@ module StirShaken
         end
         
         sanitized
-      end
-
-      ##
-      # Mask phone number for logging (keep country code + last 4 digits)
-      #
-      # @param phone_number [String] the phone number
-      # @return [String] masked phone number
-      def mask_phone_number(phone_number)
-        return phone_number unless phone_number.is_a?(String) && phone_number.length > 6
-        
-        # Keep country code and last 4 digits: +1***1234
-        country_code = phone_number[0..2]  # +1 or +44, etc.
-        last_digits = phone_number[-4..-1]
-        masked_middle = '*' * (phone_number.length - 6)
-        
-        "#{country_code}#{masked_middle}#{last_digits}"
-      end
-
-      ##
-      # Mask URL for logging (keep domain, mask path)
-      #
-      # @param url [String] the URL
-      # @return [String] masked URL
-      def mask_url(url)
-        return url unless url.is_a?(String)
-        
-        begin
-          uri = URI.parse(url)
-          "#{uri.scheme}://#{uri.host}#{uri.port != 80 && uri.port != 443 ? ":#{uri.port}" : ''}/***"
-        rescue URI::InvalidURIError
-          '***'
-        end
       end
 
       ##

@@ -371,7 +371,6 @@ RSpec.describe StirShaken::SipIdentity do
     let(:valid_urls) do
       [
         'https://example.com/cert.pem',
-        'http://localhost:8080/cert.pem',
         'https://sub.domain.com:443/path/to/cert.pem?param=value'
       ]
     end
@@ -379,6 +378,7 @@ RSpec.describe StirShaken::SipIdentity do
     let(:invalid_urls) do
       [
         'not-a-url',
+        'http://example.com/cert.pem', # HTTP not allowed per RFC 8226 §9
         'ftp://example.com/cert.pem',
         'file:///local/cert.pem',
         '',
@@ -387,7 +387,7 @@ RSpec.describe StirShaken::SipIdentity do
       ]
     end
 
-    it 'accepts valid HTTP/HTTPS URLs' do
+    it 'accepts valid HTTPS URLs' do
       valid_urls.each do |url|
         sip_identity = StirShaken::SipIdentity.new(
           passport_token: passport_token,
@@ -453,6 +453,48 @@ RSpec.describe StirShaken::SipIdentity do
       expect(passport.originating_number).to eq('+15551234567')
       expect(passport.destination_numbers).to eq(['+15559876543'])
       expect(passport.attestation).to eq('A')
+    end
+  end
+
+  describe 'header injection protection' do
+    it 'rejects additional_info keys containing semicolons' do
+      expect {
+        StirShaken::SipIdentity.create(
+          passport_token: passport_token,
+          certificate_url: certificate_url,
+          additional_info: { 'bad;key' => 'value' }
+        )
+      }.to raise_error(StirShaken::InvalidIdentityHeaderError, /illegal characters/)
+    end
+
+    it 'rejects additional_info values containing newlines' do
+      expect {
+        StirShaken::SipIdentity.create(
+          passport_token: passport_token,
+          certificate_url: certificate_url,
+          additional_info: { 'key' => "val\r\nue" }
+        )
+      }.to raise_error(StirShaken::InvalidIdentityHeaderError, /illegal characters/)
+    end
+
+    it 'rejects additional_info values containing null bytes' do
+      expect {
+        StirShaken::SipIdentity.create(
+          passport_token: passport_token,
+          certificate_url: certificate_url,
+          additional_info: { 'key' => "val\x00ue" }
+        )
+      }.to raise_error(StirShaken::InvalidIdentityHeaderError, /illegal characters/)
+    end
+
+    it 'allows safe additional_info values' do
+      expect {
+        StirShaken::SipIdentity.create(
+          passport_token: passport_token,
+          certificate_url: certificate_url,
+          additional_info: { 'custom' => 'safe-value' }
+        )
+      }.not_to raise_error
     end
   end
 

@@ -125,7 +125,7 @@ module StirShaken
           
           {
             size: certificate_cache.size,
-            entries: certificate_cache.keys,
+            entries: certificate_cache.keys.map { |url| SecurityLogger.mask_url(url) },
             hits: @cache_stats[:hits],
             misses: @cache_stats[:misses],
             total_requests: total_requests,
@@ -161,7 +161,16 @@ module StirShaken
       # @return [OpenSSL::X509::Certificate] the certificate
       def download_certificate(url)
         record_fetch!
-        
+
+        # Defense-in-depth: enforce HTTPS (RFC 8226 §9)
+        uri = URI.parse(url)
+        unless uri.is_a?(URI::HTTPS)
+          raise CertificateFetchError, "Certificate URL must use HTTPS: #{url}"
+        end
+
+        # SSRF protection: reject private/loopback/link-local addresses
+        validate_url_safety!(uri)
+
         begin
           response = HTTParty.get(url, {
             timeout: StirShaken.configuration.http_timeout,
@@ -250,14 +259,13 @@ module StirShaken
         # In a production implementation, this would verify against
         # the STIR/SHAKEN certificate authority chain
         # For now, we'll do basic self-signature verification
-        
+
         begin
           # Check if certificate is self-signed
           certificate.verify(certificate.public_key)
         rescue OpenSSL::X509::CertificateError
-          # If not self-signed, we'd need to verify against CA
-          # For now, assume valid if we can't verify
-          true
+          # Fail secure — if we can't verify, reject the certificate
+          false
         end
       end
 
@@ -288,8 +296,8 @@ module StirShaken
         # Calculate SHA256 pin of the certificate's public key
         actual_pin = Digest::SHA256.hexdigest(certificate.public_key.to_der)
         
-        unless expected_pins.include?(actual_pin)
-          raise CertificateValidationError, 
+        unless expected_pins.any? { |pin| OpenSSL.fixed_length_secure_compare(actual_pin, pin) }
+          raise CertificateValidationError,
                 "Certificate pin validation failed. Expected: #{expected_pins.join(', ')}, Got: #{actual_pin}"
         end
       end
@@ -299,20 +307,61 @@ module StirShaken
       #
       # @param url [String] the certificate URL
       # @raise [CertificateFetchError] if rate limit exceeded
+      ##
+      # Validate URL is safe from SSRF attacks
+      #
+      # @param uri [URI] parsed URI
+      # @raise [CertificateFetchError] if URL targets a private/internal address
+      def validate_url_safety!(uri)
+        host = uri.host&.downcase
+        return unless host
+
+        # Reject localhost
+        if host == 'localhost' || host == '[::1]'
+          raise CertificateFetchError, "Certificate URL must not target localhost: #{uri}"
+        end
+
+        # Resolve and check IP ranges
+        begin
+          require 'ipaddr'
+          addrs = Addrinfo.getaddrinfo(host, nil, :UNSPEC, :STREAM).map { |a| IPAddr.new(a.ip_address) }
+        rescue SocketError
+          # If we can't resolve, let the fetch fail naturally
+          return
+        end
+
+        private_ranges = [
+          IPAddr.new('10.0.0.0/8'),
+          IPAddr.new('172.16.0.0/12'),
+          IPAddr.new('192.168.0.0/16'),
+          IPAddr.new('127.0.0.0/8'),
+          IPAddr.new('169.254.0.0/16'),
+          IPAddr.new('::1/128'),
+          IPAddr.new('fc00::/7'),
+          IPAddr.new('fe80::/10')
+        ]
+
+        addrs.each do |addr|
+          if private_ranges.any? { |range| range.include?(addr) }
+            raise CertificateFetchError, "Certificate URL must not target private/internal addresses: #{uri.host}"
+          end
+        end
+      end
+
       def rate_limit_check!(url)
         # Skip rate limiting during testing
         return if ENV['RAILS_ENV'] == 'test' || ENV['RACK_ENV'] == 'test' || defined?(RSpec)
         
         @rate_limit_mutex.synchronize do
           current_minute = Time.now.to_i / 60
-          key = "#{url}_#{current_minute}"
-          
+          key = [url, current_minute]
+
           @rate_limiter[key] ||= 0
           @rate_limiter[key] += 1
-          
+
           # Clean old entries (older than 2 minutes)
-          @rate_limiter.delete_if { |k, _| k.split('_').last.to_i < current_minute - 1 }
-          
+          @rate_limiter.delete_if { |k, _| k[1] < current_minute - 1 }
+
           if @rate_limiter[key] > 10 # Max 10 fetches per minute per URL
             raise CertificateFetchError, "Rate limit exceeded for #{url} (max 10 requests per minute)"
           end

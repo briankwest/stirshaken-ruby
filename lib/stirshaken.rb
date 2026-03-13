@@ -73,7 +73,7 @@ module StirShaken
   ##
   # Configuration class for STIR/SHAKEN library with enhanced security validation
   class Configuration
-    attr_accessor :certificate_cache_ttl, :http_timeout, :default_attestation
+    attr_accessor :certificate_cache_ttl, :http_timeout, :default_attestation, :default_max_age
 
     # Security constraints
     MIN_HTTP_TIMEOUT = 5
@@ -86,6 +86,7 @@ module StirShaken
       @certificate_cache_ttl = 3600 # 1 hour
       @http_timeout = 30 # 30 seconds
       @default_attestation = 'C' # Gateway attestation
+      @default_max_age = 60 # 60 seconds
     end
 
     ##

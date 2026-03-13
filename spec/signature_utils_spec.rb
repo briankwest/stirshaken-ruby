@@ -122,14 +122,76 @@ RSpec.describe StirShaken::SignatureUtils do
   describe 'error handling' do
     it 'gracefully handles OpenSSL errors' do
       # This should not raise an exception, just return false
+      # Use a valid-length but malformed signature
       result = described_class.verify_jwt_signature(public_key, "\x00" * 64, message)
       expect(result).to be false
+    end
+
+    it 'returns false for nil public key' do
+      jwt_signature = described_class.create_jwt_signature(private_key, message)
+      expect {
+        described_class.verify_jwt_signature(nil, jwt_signature, message)
+      }.to raise_error(NoMethodError)
     end
 
     it 'handles malformed DER in der_to_jwt_signature' do
       expect {
         described_class.der_to_jwt_signature('not der')
       }.to raise_error(OpenSSL::ASN1::ASN1Error)
+    end
+  end
+
+  describe 'DER parsing error conditions' do
+    it 'raises ArgumentError for non-SEQUENCE DER input' do
+      # Tag 0x31 (SET) instead of 0x30 (SEQUENCE)
+      der = OpenSSL::ASN1::Set.new([OpenSSL::ASN1::Integer.new(1), OpenSSL::ASN1::Integer.new(2)]).to_der
+
+      expect {
+        described_class.der_to_jwt_signature(der)
+      }.to raise_error(ArgumentError, /not a SEQUENCE/)
+    end
+
+    it 'raises ArgumentError for SEQUENCE with wrong element count (1 integer)' do
+      der = OpenSSL::ASN1::Sequence.new([OpenSSL::ASN1::Integer.new(1)]).to_der
+
+      expect {
+        described_class.der_to_jwt_signature(der)
+      }.to raise_error(ArgumentError, /must contain exactly 2 INTEGERs/)
+    end
+
+    it 'raises ArgumentError for SEQUENCE with wrong element count (3 integers)' do
+      der = OpenSSL::ASN1::Sequence.new([
+        OpenSSL::ASN1::Integer.new(1),
+        OpenSSL::ASN1::Integer.new(2),
+        OpenSSL::ASN1::Integer.new(3)
+      ]).to_der
+
+      expect {
+        described_class.der_to_jwt_signature(der)
+      }.to raise_error(ArgumentError, /must contain exactly 2 INTEGERs/)
+    end
+
+    it 'raises ArgumentError for non-INTEGER elements inside SEQUENCE' do
+      der = OpenSSL::ASN1::Sequence.new([
+        OpenSSL::ASN1::OctetString.new("foo"),
+        OpenSSL::ASN1::OctetString.new("bar")
+      ]).to_der
+
+      expect {
+        described_class.der_to_jwt_signature(der)
+      }.to raise_error(ArgumentError, /must contain INTEGERs/)
+    end
+  end
+
+  describe '.verify_jwt_signature' do
+    context 'with invalid private key type' do
+      it 'returns false for RSA key' do
+        rsa_key = OpenSSL::PKey::RSA.generate(2048)
+        jwt_signature = described_class.create_jwt_signature(private_key, message)
+
+        result = described_class.verify_jwt_signature(rsa_key, jwt_signature, message)
+        expect(result).to be false
+      end
     end
   end
 

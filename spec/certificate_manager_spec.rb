@@ -302,7 +302,8 @@ RSpec.describe StirShaken::CertificateManager do
 
       stats = StirShaken::CertificateManager.cache_stats
       expect(stats[:size]).to eq(2)
-      expect(stats[:entries]).to contain_exactly('url1', 'url2')
+      # Entries are now masked URLs
+      expect(stats[:entries].length).to eq(2)
     end
   end
 
@@ -425,6 +426,158 @@ RSpec.describe StirShaken::CertificateManager do
       expect {
         StirShaken::CertificateManager.fetch_certificate(cert_url)
       }.to raise_error(StirShaken::CertificateValidationError)
+    end
+  end
+
+  describe 'advanced thread safety' do
+    it 'handles concurrent fetch_certificate with different URLs' do
+      urls = 3.times.map { |i| "https://test#{i}.example.com/cert.pem" }
+
+      urls.each do |url|
+        stub_request(:get, url)
+          .to_return(status: 200, body: certificate.to_pem)
+      end
+
+      threads = []
+      results = []
+      mutex = Mutex.new
+
+      urls.each do |url|
+        threads << Thread.new do
+          cert = StirShaken::CertificateManager.fetch_certificate(url)
+          mutex.synchronize { results << { url: url, cert: cert } }
+        end
+      end
+
+      threads.each(&:join)
+
+      expect(results.length).to eq(3)
+      results.each do |result|
+        expect(result[:cert]).to be_a(OpenSSL::X509::Certificate)
+        expect(result[:cert].to_pem).to eq(certificate.to_pem)
+      end
+
+      # Verify all URLs were cached
+      stats = StirShaken::CertificateManager.cache_stats
+      expect(stats[:size]).to eq(3)
+    end
+
+    it 'handles concurrent cache_stats reads during writes' do
+      urls = 3.times.map { |i| "https://stats-test#{i}.example.com/cert.pem" }
+
+      urls.each do |url|
+        stub_request(:get, url)
+          .to_return(status: 200, body: certificate.to_pem)
+      end
+
+      threads = []
+      errors = []
+      error_mutex = Mutex.new
+
+      # Mix fetch (write) and stats (read) calls concurrently
+      urls.each do |url|
+        threads << Thread.new do
+          begin
+            StirShaken::CertificateManager.fetch_certificate(url)
+          rescue => e
+            error_mutex.synchronize { errors << e }
+          end
+        end
+
+        threads << Thread.new do
+          begin
+            stats = StirShaken::CertificateManager.cache_stats
+            raise 'Expected Hash' unless stats.is_a?(Hash)
+            raise 'Missing :size key' unless stats.key?(:size)
+          rescue => e
+            error_mutex.synchronize { errors << e }
+          end
+        end
+      end
+
+      threads.each(&:join)
+
+      expect(errors).to be_empty, "Thread safety errors: #{errors.map(&:message).join(', ')}"
+
+      # Final stats should reflect all fetched certificates
+      final_stats = StirShaken::CertificateManager.cache_stats
+      expect(final_stats[:size]).to eq(3)
+    end
+  end
+
+  describe 'HTTPS enforcement' do
+    it 'rejects HTTP URLs' do
+      http_url = 'http://insecure.example.com/cert.pem'
+
+      expect {
+        StirShaken::CertificateManager.send(:download_certificate, http_url)
+      }.to raise_error(StirShaken::CertificateFetchError, /must use HTTPS/)
+    end
+
+    it 'accepts HTTPS URLs' do
+      https_url = 'https://secure.example.com/cert.pem'
+
+      stub_request(:get, https_url)
+        .to_return(status: 200, body: certificate.to_pem)
+
+      # Stub out SSRF validation since DNS resolution may fail in test
+      allow(StirShaken::CertificateManager).to receive(:validate_url_safety!)
+
+      cert = StirShaken::CertificateManager.send(:download_certificate, https_url)
+      expect(cert).to be_a(OpenSSL::X509::Certificate)
+      expect(cert.to_pem).to eq(certificate.to_pem)
+    end
+  end
+
+  describe 'SSRF protection' do
+    let(:manager) { StirShaken::CertificateManager }
+
+    def make_addrinfo(ip)
+      instance_double(Addrinfo, ip_address: ip)
+    end
+
+    it 'rejects private IP 10.0.0.1' do
+      uri = URI.parse('https://private.example.com/cert.pem')
+      allow(Addrinfo).to receive(:getaddrinfo).and_return([make_addrinfo('10.0.0.1')])
+
+      expect {
+        manager.send(:validate_url_safety!, uri)
+      }.to raise_error(StirShaken::CertificateFetchError, /private\/internal/)
+    end
+
+    it 'rejects private IP 172.16.0.1' do
+      uri = URI.parse('https://private.example.com/cert.pem')
+      allow(Addrinfo).to receive(:getaddrinfo).and_return([make_addrinfo('172.16.0.1')])
+
+      expect {
+        manager.send(:validate_url_safety!, uri)
+      }.to raise_error(StirShaken::CertificateFetchError, /private\/internal/)
+    end
+
+    it 'rejects private IP 192.168.1.1' do
+      uri = URI.parse('https://private.example.com/cert.pem')
+      allow(Addrinfo).to receive(:getaddrinfo).and_return([make_addrinfo('192.168.1.1')])
+
+      expect {
+        manager.send(:validate_url_safety!, uri)
+      }.to raise_error(StirShaken::CertificateFetchError, /private\/internal/)
+    end
+
+    it 'rejects localhost' do
+      uri = URI.parse('https://localhost/cert.pem')
+
+      expect {
+        manager.send(:validate_url_safety!, uri)
+      }.to raise_error(StirShaken::CertificateFetchError, /localhost/)
+    end
+
+    it 'rejects loopback 127.0.0.1' do
+      uri = URI.parse('https://loopback.example.com/cert.pem')
+      allow(Addrinfo).to receive(:getaddrinfo).and_return([make_addrinfo('127.0.0.1')])
+
+      expect {
+        manager.send(:validate_url_safety!, uri)
+      }.to raise_error(StirShaken::CertificateFetchError, /private\/internal/)
     end
   end
 end 

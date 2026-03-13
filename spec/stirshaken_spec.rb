@@ -51,6 +51,162 @@ RSpec.describe StirShaken do
     end
   end
 
+  describe 'security validation' do
+    let(:config) { StirShaken::Configuration.new }
+
+    describe 'timeout security' do
+      it 'rejects http_timeout below minimum (5)' do
+        config.http_timeout = 3
+        expect { config.send(:validate_timeout_security!) }.to raise_error(
+          StirShaken::ConfigurationError, /HTTP timeout too low/
+        )
+      end
+
+      it 'rejects http_timeout above maximum (120)' do
+        config.http_timeout = 150
+        expect { config.send(:validate_timeout_security!) }.to raise_error(
+          StirShaken::ConfigurationError, /HTTP timeout too high/
+        )
+      end
+
+      it 'rejects negative http_timeout' do
+        config.http_timeout = -1
+        expect { config.send(:validate_timeout_security!) }.to raise_error(
+          StirShaken::ConfigurationError, /HTTP timeout must be a positive number/
+        )
+      end
+
+      it 'rejects non-numeric http_timeout' do
+        config.http_timeout = 'fast'
+        expect { config.send(:validate_timeout_security!) }.to raise_error(
+          StirShaken::ConfigurationError, /HTTP timeout must be a positive number/
+        )
+      end
+
+      it 'rejects zero http_timeout' do
+        config.http_timeout = 0
+        expect { config.send(:validate_timeout_security!) }.to raise_error(
+          StirShaken::ConfigurationError, /HTTP timeout must be a positive number/
+        )
+      end
+
+      it 'accepts http_timeout at minimum boundary (5)' do
+        config.http_timeout = 5
+        expect { config.send(:validate_timeout_security!) }.not_to raise_error
+      end
+
+      it 'accepts http_timeout at maximum boundary (120)' do
+        config.http_timeout = 120
+        expect { config.send(:validate_timeout_security!) }.not_to raise_error
+      end
+
+      it 'accepts valid http_timeout within range' do
+        config.http_timeout = 30
+        expect { config.send(:validate_timeout_security!) }.not_to raise_error
+      end
+    end
+
+    describe 'cache TTL security' do
+      it 'rejects cache_ttl below minimum (300)' do
+        config.certificate_cache_ttl = 100
+        expect { config.send(:validate_cache_security!) }.to raise_error(
+          StirShaken::ConfigurationError, /Cache TTL too low/
+        )
+      end
+
+      it 'rejects cache_ttl above maximum (86400)' do
+        config.certificate_cache_ttl = 100_000
+        expect { config.send(:validate_cache_security!) }.to raise_error(
+          StirShaken::ConfigurationError, /Cache TTL too high/
+        )
+      end
+
+      it 'rejects negative cache_ttl' do
+        config.certificate_cache_ttl = -1
+        expect { config.send(:validate_cache_security!) }.to raise_error(
+          StirShaken::ConfigurationError, /Cache TTL must be a positive number/
+        )
+      end
+
+      it 'rejects non-numeric cache_ttl' do
+        config.certificate_cache_ttl = 'long'
+        expect { config.send(:validate_cache_security!) }.to raise_error(
+          StirShaken::ConfigurationError, /Cache TTL must be a positive number/
+        )
+      end
+
+      it 'accepts cache_ttl at minimum boundary (300)' do
+        config.certificate_cache_ttl = 300
+        expect { config.send(:validate_cache_security!) }.not_to raise_error
+      end
+
+      it 'accepts cache_ttl at maximum boundary (86400)' do
+        config.certificate_cache_ttl = 86_400
+        expect { config.send(:validate_cache_security!) }.not_to raise_error
+      end
+
+      it 'accepts valid cache_ttl within range' do
+        config.certificate_cache_ttl = 3600
+        expect { config.send(:validate_cache_security!) }.not_to raise_error
+      end
+    end
+
+    describe 'attestation security' do
+      it 'rejects invalid attestation X' do
+        config.default_attestation = 'X'
+        expect { config.send(:validate_attestation_security!) }.to raise_error(
+          StirShaken::ConfigurationError, /Invalid default attestation 'X'/
+        )
+      end
+
+      it 'rejects invalid attestation D' do
+        config.default_attestation = 'D'
+        expect { config.send(:validate_attestation_security!) }.to raise_error(
+          StirShaken::ConfigurationError, /Invalid default attestation 'D'/
+        )
+      end
+
+      it 'rejects lowercase attestation' do
+        config.default_attestation = 'a'
+        expect { config.send(:validate_attestation_security!) }.to raise_error(
+          StirShaken::ConfigurationError, /Invalid default attestation/
+        )
+      end
+
+      it 'accepts attestation A' do
+        config.default_attestation = 'A'
+        expect { config.send(:validate_attestation_security!) }.not_to raise_error
+      end
+
+      it 'accepts attestation B' do
+        config.default_attestation = 'B'
+        expect { config.send(:validate_attestation_security!) }.not_to raise_error
+      end
+
+      it 'accepts attestation C' do
+        config.default_attestation = 'C'
+        expect { config.send(:validate_attestation_security!) }.not_to raise_error
+      end
+    end
+
+    describe 'valid configuration' do
+      it 'passes all validation with default values' do
+        expect { config.send(:validate_timeout_security!) }.not_to raise_error
+        expect { config.send(:validate_cache_security!) }.not_to raise_error
+        expect { config.send(:validate_attestation_security!) }.not_to raise_error
+      end
+
+      it 'passes all validation with custom valid values' do
+        config.http_timeout = 60
+        config.certificate_cache_ttl = 7200
+        config.default_attestation = 'A'
+        expect { config.send(:validate_timeout_security!) }.not_to raise_error
+        expect { config.send(:validate_cache_security!) }.not_to raise_error
+        expect { config.send(:validate_attestation_security!) }.not_to raise_error
+      end
+    end
+  end
+
   describe 'module structure' do
     it 'defines all required classes' do
       expect(defined?(StirShaken::Passport)).to be_truthy

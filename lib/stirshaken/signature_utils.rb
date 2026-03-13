@@ -87,9 +87,11 @@ module StirShaken
       
       # Verify using OpenSSL
       public_key.verify(digest, der_signature, message)
-    rescue => e
-      # Log the error for debugging but return false
-      puts "Signature verification failed: #{e.message}" if ENV['STIRSHAKEN_DEBUG']
+    rescue OpenSSL::PKey::PKeyError, OpenSSL::PKey::ECError, ArgumentError, OpenSSL::ASN1::ASN1Error => e
+      SecurityLogger.log_security_event(:verification_failure, {
+        error_class: e.class.name,
+        error_message: e.message
+      }, severity: :medium) if ENV['STIRSHAKEN_DEBUG']
       false
     end
     
@@ -118,7 +120,10 @@ module StirShaken
     def self.asn1_integer_der(bn)
       # Convert BN to minimal byte representation
       bytes = bn.to_s(2)
-      
+
+      # Handle zero value
+      bytes = "\x00" if bytes.empty?
+
       # Add leading zero if high bit is set (to ensure positive interpretation)
       bytes = "\x00" + bytes if bytes.getbyte(0) >= 0x80
       

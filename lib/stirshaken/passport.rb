@@ -164,7 +164,13 @@ module StirShaken
     # @return [Boolean] true if expired
     def expired?(max_age: 60)
       return true unless issued_at
-      Time.now.to_i - issued_at > max_age
+
+      now = Time.now.to_i
+
+      # Reject tokens with future-dated iat (allow 60s clock skew)
+      return true if issued_at > now + 60
+
+      now - issued_at > max_age
     end
 
     ##
