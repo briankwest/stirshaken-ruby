@@ -1,255 +1,326 @@
-# STIR/SHAKEN Ruby Implementation
+# STIR/SHAKEN Ruby
 
-A comprehensive Ruby library implementing STIR (Secure Telephone Identity Revisited) and SHAKEN (Signature-based Handling of Asserted information using toKENs) protocols for combating caller ID spoofing in telecommunications.
+A complete Ruby implementation of the STIR/SHAKEN protocol suite for caller ID authentication in telecommunications, covering RFC 8224, 8225, 8226, 8588, and 8946.
 
-## Overview
+## What It Does
 
-STIR/SHAKEN is a suite of protocols designed to authenticate caller ID information and combat robocalls and caller ID spoofing. This Ruby implementation provides:
+STIR/SHAKEN combats caller ID spoofing by cryptographically signing and verifying call identity. This gem provides:
 
-- **PASSporT (Personal Assertion Token)** creation and validation (RFC 8225)
-- **SIP Identity Header** generation and parsing (RFC 8224)
-- **SHAKEN Extension** support (RFC 8588)
-- **Certificate Management** with caching and validation (RFC 8226)
-- **Authentication Service** for signing calls
-- **Verification Service** for validating calls
+- **Sign outbound calls** with ES256-signed PASSporT tokens
+- **Verify inbound calls** by validating signatures against certificates
+- **Handle call diversion** with DIV PASSporT tokens (RFC 8946)
+- **Manage certificates** with caching, chain validation, CRL checking, and SSRF protection
+- **Full RFC compliance** including TNAuthList, Extended Key Usage, and lexicographic claim ordering
+
+## Architecture
+
+```mermaid
+graph LR
+    subgraph "Originating Service Provider"
+        A[AuthenticationService] --> B[Passport.create]
+        B --> C[SipIdentity.create]
+        C --> D["SIP INVITE + Identity Header"]
+    end
+
+    D -->|Network| E
+
+    subgraph "Terminating Service Provider"
+        E["SIP INVITE + Identity Header"] --> F[SipIdentity.parse]
+        F --> G[CertificateManager.fetch]
+        G --> H[Passport.parse + verify]
+        H --> I[VerificationResult]
+    end
+```
+
+## Call Signing Flow
+
+```mermaid
+sequenceDiagram
+    participant App
+    participant AuthService as AuthenticationService
+    participant Passport
+    participant SipIdentity
+    participant Key as Private Key (ES256)
+
+    App->>AuthService: sign_call(from, to, attestation)
+    AuthService->>Passport: create(orig, dest, attest, x5u)
+    Passport->>Key: JWT.encode(payload, key, ES256)
+    Key-->>Passport: signed JWT token
+    Passport-->>AuthService: passport_token
+    AuthService->>SipIdentity: create(token, cert_url)
+    SipIdentity-->>AuthService: Identity header string
+    AuthService-->>App: "eyJ...;info=<url>;alg=ES256;ppt=shaken"
+```
+
+## Call Verification Flow
+
+```mermaid
+sequenceDiagram
+    participant App
+    participant VerifySvc as VerificationService
+    participant SipIdentity
+    participant CertMgr as CertificateManager
+    participant Passport
+
+    App->>VerifySvc: verify_call(identity_header)
+    VerifySvc->>SipIdentity: parse(header)
+    SipIdentity-->>VerifySvc: token + info_url
+
+    VerifySvc->>CertMgr: fetch_certificate(info_url)
+    Note over CertMgr: Cache check -> HTTPS fetch -> SSRF check
+    CertMgr-->>VerifySvc: X.509 certificate
+
+    VerifySvc->>CertMgr: validate_certificate(cert)
+    Note over CertMgr: Expiry + KeyUsage + EKU + TNAuthList + Chain
+    CertMgr-->>VerifySvc: valid?
+
+    VerifySvc->>Passport: parse(token, public_key, verify: true)
+    Note over Passport: Signature + Claims + Freshness
+    Passport-->>VerifySvc: passport
+
+    VerifySvc-->>App: VerificationResult(valid, attestation, confidence)
+```
+
+## Call Diversion Flow (RFC 8946)
+
+```mermaid
+sequenceDiagram
+    participant OrigSP as Originating SP
+    participant DivSP as Diverting SP
+    participant TermSP as Terminating SP
+
+    OrigSP->>DivSP: INVITE + SHAKEN Identity header
+    Note over DivSP: Parse original PASSporT
+    DivSP->>DivSP: create_div_passport(original, new_dest, reason)
+    Note over DivSP: Attestation reduced (A->B, B->C)
+    DivSP->>TermSP: INVITE + SHAKEN header + DIV header
+    TermSP->>TermSP: verify_chain(div_token, shaken_token)
+    Note over TermSP: Validates origid + orig.tn + dest chain
+```
+
+## Certificate Validation Pipeline
+
+```mermaid
+flowchart TD
+    A[Certificate URL] --> B{HTTPS?}
+    B -->|No| X1[Reject: must use HTTPS]
+    B -->|Yes| C{SSRF Safe?}
+    C -->|Private IP/Localhost| X2[Reject: SSRF blocked]
+    C -->|Safe| D{Rate Limited?}
+    D -->|Over 10/min| X3[Reject: rate limit]
+    D -->|OK| E[Fetch Certificate]
+    E --> F{Expired?}
+    F -->|Yes| X4[Reject: expired]
+    F -->|No| G{Key Usage?}
+    G -->|No digitalSignature| X5[Reject: wrong key usage]
+    G -->|OK| H{EKU Present?}
+    H -->|Yes, wrong OID| X6[Reject: wrong EKU]
+    H -->|OK or absent| I{Trust Store?}
+    I -->|Configured| J[Chain validation via X509::Store]
+    I -->|Not configured| K[Self-signature check]
+    J --> L{CRL Check?}
+    L -->|Enabled| M[Fetch & verify CRL]
+    L -->|Disabled| N[Accept]
+    K --> N
+    M --> N
+```
+
+## Quick Start
+
+```ruby
+require 'stirshaken'
+
+# 1. Generate keys (test only — use real STI certs in production)
+key_pair = StirShaken::AuthenticationService.generate_key_pair
+private_key = key_pair[:private_key]
+public_key  = key_pair[:public_key]
+
+certificate = StirShaken::AuthenticationService.create_test_certificate(
+  private_key, telephone_numbers: ['+15551234567']
+)
+
+# 2. Sign a call
+auth_service = StirShaken::AuthenticationService.new(
+  private_key: private_key,
+  certificate_url: 'https://cert.example.com/stir.pem',
+  certificate: certificate
+)
+
+identity_header = auth_service.sign_call(
+  originating_number: '+15551234567',
+  destination_number: '+15559876543',
+  attestation: 'A'
+)
+
+# 3. Verify a call
+verification_service = StirShaken::VerificationService.new
+result = verification_service.verify_call(identity_header)
+
+result.valid?           # => true
+result.attestation      # => "A"
+result.confidence_level # => 100
+```
 
 ## Installation
 
-Add this line to your application's Gemfile:
+Add to your Gemfile:
 
 ```ruby
 gem 'stirshaken'
 ```
 
-And then execute:
-
 ```bash
-$ bundle install
+bundle install
 ```
 
-Or install it yourself as:
-
-```bash
-$ gem install stirshaken
-```
-
-## Quick Start
-
-### Signing a Call (Authentication Service)
-
-```ruby
-require 'stirshaken'
-
-# Generate a key pair for testing
-key_pair = StirShaken::AuthenticationService.generate_key_pair
-private_key = key_pair[:private_key]
-
-# Create an authentication service
-auth_service = StirShaken::AuthenticationService.new(
-  private_key: private_key,
-  certificate_url: 'https://example.com/cert.pem'
-)
-
-# Sign a call
-identity_header = auth_service.sign_call(
-  originating_number: '+15551234567',
-  destination_number: '+15559876543',
-  attestation: 'A'  # Full attestation
-)
-
-puts identity_header
-# Output: eyJhbGciOiJFUzI1NiIsInBwdCI6InNoYWtlbiIsInR5cCI6InBhc3Nwb3J0IiwieDV1IjoiaHR0cHM6Ly9leGFtcGxlLmNvbS9jZXJ0LnBlbSJ9...
-```
-
-### Verifying a Call (Verification Service)
-
-```ruby
-# Create a verification service
-verification_service = StirShaken::VerificationService.new
-
-# Verify a call
-result = verification_service.verify_call(identity_header)
-
-if result.valid?
-  puts "Call verified! Attestation: #{result.attestation}"
-  puts "Confidence: #{result.confidence_level}%"
-else
-  puts "Verification failed: #{result.reason}"
-end
-```
+**Requirements:** Ruby >= 3.4.0, OpenSSL 3.0+
 
 ## Attestation Levels
 
-STIR/SHAKEN defines three levels of attestation:
-
-- **Full Attestation (A)** - Service provider has authenticated the calling party (100% confidence)
-- **Partial Attestation (B)** - Call origination authenticated but caller authorization unverified (75% confidence)
-- **Gateway Attestation (C)** - Only gateway authentication available (50% confidence)
-
-```ruby
-# Get attestation description
-StirShaken::Attestation.description('A')
-# "Full Attestation - Service provider has authenticated the calling party and verified authorization"
-
-# Get confidence level
-StirShaken::Attestation.confidence_level('A')  # 100
-```
+| Level | Name | Confidence | Meaning |
+|-------|------|-----------|---------|
+| **A** | Full | 100% | SP authenticated the caller and verified number authorization |
+| **B** | Partial | 75% | SP authenticated call origination but cannot verify number authorization |
+| **C** | Gateway | 50% | SP authenticated the gateway but cannot authenticate the call source |
 
 ## Configuration
 
-Configure the library globally:
-
 ```ruby
 StirShaken.configure do |config|
-  config.certificate_cache_ttl = 3600    # 1 hour cache TTL
-  config.http_timeout = 30               # 30 second HTTP timeout
+  # Core settings
+  config.certificate_cache_ttl = 3600    # 1 hour (min: 300, max: 86400)
+  config.http_timeout = 30               # seconds (min: 5, max: 120)
+  config.default_attestation = 'C'       # A, B, or C
+  config.default_max_age = 60            # seconds (min: 1, max: 900)
+
+  # Trust store (production)
+  config.trust_store_path = '/etc/ssl/stir-shaken'
+  config.trust_store_certificates = [ca_pem_string]
+
+  # Revocation checking
+  config.check_revocation = true
+  config.crl_cache_ttl = 3600
 end
 ```
-
-## Documentation
-
-For comprehensive documentation, examples, and advanced usage patterns, see:
-
-📖 **[USAGE_GUIDE.md](USAGE_GUIDE.md)** - Complete usage guide with all features and examples
-🔒 **[SECURITY.md](SECURITY.md)** - Security policy, audit results, and best practices
-
-The usage guide covers:
-- Installation and setup
-- All core components (Authentication, Verification, Certificates, PASSporT, SIP Identity)
-- Attestation levels and configuration
-- Error handling strategies
-- Advanced usage patterns
-- Production deployment considerations
-- Troubleshooting and debugging
 
 ## Features
 
-### Core Components
+### Signing & Verification
+- PASSporT token creation/validation with ES256 (P-256)
+- SIP Identity header generation/parsing (RFC 8224)
+- Multiple Identity header support (`parse_multiple`, `verify_multiple`)
+- Destination URIs (`dest.uri`) alongside telephone numbers (`dest.tn`)
+- Lexicographic claim ordering per RFC 8588
+- `canon` parameter support for SIP canonicalization
+- Configurable token freshness window with clock skew tolerance
 
-- **PASSporT Tokens**: JWT-based tokens with cryptographic signatures
-- **SIP Identity Headers**: RFC 8224 compliant header generation and parsing
-- **Certificate Management**: Automatic fetching, caching, and validation
-- **Attestation Levels**: Full support for A, B, and C attestation levels
-- **Phone Number Validation**: E.164 format validation and normalization
+### Call Diversion (RFC 8946)
+- DIV PASSporT creation from PASSporTs or Identity headers
+- All 10 diversion reasons: `forwarding`, `deflection`, `follow-me`, `time-of-day`, `user-busy`, `no-answer`, `unavailable`, `unconditional`, `away`, `unknown`
+- Chain verification (`verify_chain`) validates origid, orig.tn, and dest consistency
+- Automatic attestation reduction (A->B, B->C, C->C)
+- Complete call forwarding workflow (`create_call_forwarding`)
+
+### Certificate Management
+- Automatic fetching with thread-safe caching
+- Full chain validation via configurable trust store
+- TNAuthList extension parsing (OID 1.3.6.1.5.5.7.1.26)
+- Extended Key Usage validation (id-kp-jwt-stir-shaken)
+- CRL distribution point extraction and cached CRL fetching
+- Multi-PEM certificate chain parsing
+- Certificate pinning with SHA-256
 
 ### Security
-
-- ES256 algorithm enforcement (P-256 elliptic curve)
-- Certificate chain validation
-- Token expiration checking
-- Phone number authorization verification
-- Comprehensive input validation
-- **Certificate Pinning**: SHA256 public key pinning support
-- **Rate Limiting**: Built-in rate limiting for certificate fetches (10 requests/minute/URL)
-- **Security Event Logging**: Comprehensive audit trail for all security events
-- **Configuration Validation**: Security-enforced configuration constraints
-- **Thread Safety**: Mutex-protected operations for concurrent access
-
-### Performance
-
-- Certificate caching with configurable TTL
-- Thread-safe operations
-- Efficient cryptographic operations
-- Configurable HTTP timeouts
-
-## Standards Compliance
-
-This implementation follows these RFCs and standards:
-
-- **RFC 8224** - Authenticated Identity Management in SIP
-- **RFC 8225** - PASSporT: Personal Assertion Token
-- **RFC 8226** - Secure Telephone Identity Credentials: Certificates
-- **RFC 8588** - PASSporT Extension for SHAKEN
-- **ATIS-1000074** - SHAKEN Framework
-
-## Requirements
-
-- Ruby 3.0+ (tested with Ruby 3.4.4)
-- OpenSSL 3.0+
-- Network access for certificate fetching
-
-## Testing
-
-The library includes a comprehensive test suite with 100% test coverage:
-
-```bash
-# Run all tests
-bundle exec rspec
-
-# Run with coverage
-bundle exec rspec --format documentation
-```
+- HTTPS-only certificate URLs (RFC 8226 section 9)
+- SSRF protection (rejects 10/8, 172.16/12, 192.168/16, 127/8, 169.254/16, ::1, fc00::/7, fe80::/10)
+- SIP header injection protection (rejects `;`, `\r`, `\n`, `\0`)
+- JWT `alg:none` attack prevention (multi-layer ES256 enforcement)
+- Constant-time certificate pin comparison
+- Fail-secure certificate chain verification
+- Rate limiting (10 requests/minute/URL)
+- Thread-safe operations (mutex-protected caches and stats)
+- Security event audit logging with PII masking
 
 ## Error Handling
 
-The library provides comprehensive error handling with specific exception types:
+All errors inherit from `StirShaken::Error`:
+
+```
+StirShaken::Error
+├── PassportValidationError
+├── CertificateError
+│   ├── CertificateFetchError
+│   ├── CertificateValidationError
+│   └── CertificateRevocationError
+├── SignatureVerificationError
+├── InvalidAttestationError
+├── InvalidPhoneNumberError
+├── InvalidIdentityHeaderError
+├── InvalidTokenError
+├── ConfigurationError
+└── InvalidDiversionReasonError
+```
 
 ```ruby
-begin
-  result = verification_service.verify_call(identity_header)
-rescue StirShaken::CertificateFetchError => e
-  puts "Certificate fetch failed: #{e.message}"
-rescue StirShaken::SignatureVerificationError => e
-  puts "Signature verification failed: #{e.message}"
-rescue StirShaken::PassportValidationError => e
-  puts "PASSporT validation failed: #{e.message}"
-rescue StirShaken::Error => e
-  puts "STIR/SHAKEN error: #{e.message}"
+result = verification_service.verify_call(identity_header)
+
+if result.valid?
+  puts "Verified: #{result.attestation} (#{result.confidence_level}%)"
+else
+  puts "Failed: #{result.reason}"
 end
+```
+
+## RFC Compliance
+
+| RFC | Title | Coverage |
+|-----|-------|----------|
+| **8224** | Authenticated Identity Management in SIP | Identity header create/parse, `canon` param, multiple headers |
+| **8225** | PASSporT | Token create/parse/validate, `dest.tn` + `dest.uri`, lexicographic ordering |
+| **8226** | Secure Telephone Identity Credentials | HTTPS enforcement, TNAuthList, EKU, trust store chain validation, CRL |
+| **8588** | SHAKEN | Attestation A/B/C, `ppt=shaken`, freshness, `origid`, configurable `max_age` |
+| **8946** | DIV PASSporT | `ppt=div`, all 10 diversion reasons, chain verification, attestation reduction |
+
+See [docs/rfc-compliance.md](docs/rfc-compliance.md) for the detailed compliance matrix.
+
+## Documentation
+
+| Guide | Description |
+|-------|-------------|
+| [Getting Started](docs/getting-started.md) | Installation, prerequisites, quick start walkthrough |
+| [Configuration](docs/configuration.md) | All options, constraints, environment examples |
+| [Certificates](docs/certificates.md) | Fetching, caching, trust store, CRL, TNAuthList |
+| [Security](docs/security.md) | HTTPS, SSRF, header injection, logging, thread safety |
+| [Call Diversion](docs/call-diversion.md) | DIV PASSporT, diversion reasons, chain verification |
+| [API Reference](docs/api-reference.md) | Every public class and method |
+| [RFC Compliance](docs/rfc-compliance.md) | Detailed compliance matrix per RFC section |
+
+## Testing
+
+```bash
+bundle exec rspec                    # Run all 461 tests
+bundle exec rspec --format doc       # Verbose output
+bundle exec rake spec:unit           # Unit tests only
+bundle exec rake spec:integration    # Integration tests only
+COVERAGE=true bundle exec rspec      # With coverage
 ```
 
 ## Development
 
-### Generate Test Certificates
-
-```ruby
-# Generate a key pair
-key_pair = StirShaken::AuthenticationService.generate_key_pair
-private_key = key_pair[:private_key]
-
-# Create a test certificate
-certificate = StirShaken::AuthenticationService.create_test_certificate(
-  private_key,
-  subject: '/CN=Test STIR Certificate',
-  telephone_numbers: ['+15551234567', '+15559876543']
-)
-```
-
-### Structure Validation (Debug Mode)
-
-For testing and debugging, you can validate structure without cryptographic verification:
-
-```ruby
-verification_service = StirShaken::VerificationService.new
-info = verification_service.validate_structure(identity_header)
-
-puts info[:valid_structure]           # true/false
-puts info[:attestation_description]   # Human-readable attestation description
+```bash
+bundle install                       # Install dependencies
+bundle exec rake dev:console         # Interactive console
+bundle exec rubocop                  # Lint
 ```
 
 ## Contributing
 
 1. Fork the repository
-2. Create your feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit your changes (`git commit -am 'Add amazing feature'`)
-4. Push to the branch (`git push origin feature/amazing-feature`)
+2. Create your feature branch (`git checkout -b feature/my-feature`)
+3. Commit your changes (`git commit -am 'Add my feature'`)
+4. Push to the branch (`git push origin feature/my-feature`)
 5. Open a Pull Request
 
 ## License
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
-
-## Support
-
-For questions, issues, or contributions:
-
-- 📖 Read the [comprehensive usage guide](USAGE_GUIDE.md)
-- 🐛 Report issues on GitHub
-- 💬 Join discussions in GitHub Discussions
-- 📧 Contact the maintainers
-
-## Acknowledgments
-
-- ATIS SHAKEN Working Group for the standards
-- IETF SIP Working Group for the RFCs
-- The Ruby community for excellent cryptographic libraries 
+MIT License - see [LICENSE](LICENSE) for details.
