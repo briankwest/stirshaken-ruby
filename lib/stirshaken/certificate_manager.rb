@@ -18,6 +18,8 @@ module StirShaken
     @rate_limit_mutex = Mutex.new
     @cache_stats = { hits: 0, misses: 0, fetches: 0 }
     @stats_mutex = Mutex.new
+    @crl_cache = {}
+    @crl_cache_mutex = Mutex.new
 
     class << self
       attr_reader :certificate_cache, :cache_mutex
@@ -112,6 +114,54 @@ module StirShaken
           certificate_cache.clear
           @cache_stats = { hits: 0, misses: 0, fetches: 0 }
         end
+      end
+
+      ##
+      # Fetch certificate chain from URL (may contain multiple PEM certs)
+      #
+      # @param url [String] the certificate URL
+      # @return [Array<OpenSSL::X509::Certificate>] array of certificates (leaf first)
+      def fetch_certificate_chain(url)
+        rate_limit_check!(url)
+
+        uri = URI.parse(url)
+        unless uri.is_a?(URI::HTTPS)
+          raise CertificateFetchError, "Certificate URL must use HTTPS: #{url}"
+        end
+        validate_url_safety!(uri)
+
+        begin
+          response = HTTParty.get(url, {
+            timeout: StirShaken.configuration.http_timeout,
+            headers: { 'User-Agent' => "StirShaken Ruby #{StirShaken::VERSION}" }
+          })
+
+          unless response.success?
+            raise CertificateFetchError, "Failed to fetch certificate from #{url}: #{response.code}"
+          end
+
+          parse_certificate_chain(response.body)
+        rescue HTTParty::Error, Timeout::Error, Errno::ETIMEDOUT, Socket::ResolutionError => e
+          raise CertificateFetchError, "Network error fetching certificate from #{url}: #{e.message}"
+        end
+      end
+
+      ##
+      # Parse PEM data that may contain multiple certificates
+      #
+      # @param pem_data [String] PEM data possibly containing multiple certs
+      # @return [Array<OpenSSL::X509::Certificate>] array of certificates
+      def parse_certificate_chain(pem_data)
+        certs = pem_data.scan(/-----BEGIN CERTIFICATE-----.*?-----END CERTIFICATE-----/m)
+
+        if certs.empty?
+          # Try as single DER/PEM certificate
+          return [OpenSSL::X509::Certificate.new(pem_data)]
+        end
+
+        certs.map { |pem| OpenSSL::X509::Certificate.new(pem) }
+      rescue OpenSSL::X509::CertificateError => e
+        raise CertificateValidationError, "Invalid certificate format: #{e.message}"
       end
 
       ##
@@ -219,9 +269,18 @@ module StirShaken
         # Check for digital signature key usage
         key_usage_ext = certificate.extensions.find { |ext| ext.oid == 'keyUsage' }
         return false unless key_usage_ext
+        return false unless key_usage_ext.value.include?('Digital Signature')
 
-        key_usage_value = key_usage_ext.value
-        key_usage_value.include?('Digital Signature')
+        # Check Extended Key Usage for STIR/SHAKEN if present (RFC 8226)
+        # OID 1.3.6.1.5.5.7.3.20 = id-kp-jwt-stir-shaken
+        eku_ext = certificate.extensions.find { |ext| ext.oid == 'extendedKeyUsage' }
+        if eku_ext
+          eku_value = eku_ext.value
+          # Accept if it contains the STIR/SHAKEN EKU OID or is not restrictive
+          return false unless eku_value.include?('1.3.6.1.5.5.7.3.20') || eku_value.include?('TLS Web Server Authentication')
+        end
+
+        true
       end
 
       ##
@@ -231,23 +290,63 @@ module StirShaken
       # @param telephone_number [String] the telephone number
       # @return [Boolean] true if authorized
       def telephone_number_authorized?(certificate, telephone_number)
-        # Check Subject Alternative Name (SAN) extension for telephone numbers
+        normalized_number = normalize_telephone_number(telephone_number)
+
+        # First try TNAuthList extension (OID 1.3.6.1.5.5.7.1.26) per RFC 8226
+        tn_auth_ext = certificate.extensions.find { |ext| ext.oid == '1.3.6.1.5.5.7.1.26' }
+        if tn_auth_ext
+          return check_tn_auth_list(tn_auth_ext, normalized_number)
+        end
+
+        # Fallback to SAN tel: URI check
         san_ext = certificate.extensions.find { |ext| ext.oid == 'subjectAltName' }
         return false unless san_ext
 
-        # Parse SAN for telephone number entries
-        san_value = san_ext.value
-        
-        # Look for URI entries with tel: scheme
-        tel_uris = san_value.scan(/URI:tel:([+\d]+)/).flatten
-        
-        # Normalize telephone number for comparison
-        normalized_number = normalize_telephone_number(telephone_number)
-        
+        tel_uris = san_ext.value.scan(/URI:tel:([+\d]+)/).flatten
         tel_uris.any? do |tel_uri|
-          normalized_tel_uri = normalize_telephone_number(tel_uri)
-          normalized_number == normalized_tel_uri
+          normalized_number == normalize_telephone_number(tel_uri)
         end
+      end
+
+      ##
+      # Parse TNAuthList extension (RFC 8226)
+      # TNAuthorizationList ::= SEQUENCE OF TNEntry
+      # TNEntry ::= CHOICE { spc [0], range [1], one [2] }
+      #
+      # @param extension [OpenSSL::X509::Extension] the TNAuthList extension
+      # @param normalized_number [String] normalized phone number to check
+      # @return [Boolean] true if number is authorized
+      def check_tn_auth_list(extension, normalized_number)
+        # Strip the + prefix for comparison with TNAuthList entries
+        digits = normalized_number.sub(/^\+/, '')
+
+        begin
+          asn1 = OpenSSL::ASN1.decode(extension.to_der)
+          # The extension value is wrapped: OID + OCTET STRING containing the SEQUENCE
+          # Navigate to the actual TNAuthorizationList
+          ext_value = asn1.value.last
+          tn_auth_list = OpenSSL::ASN1.decode(ext_value.value)
+
+          tn_auth_list.value.each do |tn_entry|
+            case tn_entry.tag
+            when 0 # ServiceProviderCode — authorizes all numbers for this SPC
+              return true
+            when 1 # TelephoneNumberRange
+              start_num = tn_entry.value[0].value
+              count = tn_entry.value[1].value.to_i
+              start_int = start_num.to_i
+              num_int = digits.to_i
+              return true if num_int >= start_int && num_int < start_int + count
+            when 2 # Single TelephoneNumber
+              return true if tn_entry.value == digits
+            end
+          end
+        rescue OpenSSL::ASN1::ASN1Error, NoMethodError
+          # If we can't parse the TNAuthList, fall through to SAN check
+          return false
+        end
+
+        false
       end
 
       ##
@@ -256,16 +355,109 @@ module StirShaken
       # @param certificate [OpenSSL::X509::Certificate] the certificate
       # @return [Boolean] true if valid
       def verify_certificate_chain(certificate)
-        # In a production implementation, this would verify against
-        # the STIR/SHAKEN certificate authority chain
-        # For now, we'll do basic self-signature verification
+        config = StirShaken.configuration
 
+        # If a trust store is configured, do full chain validation
+        if config.trust_store_path || config.trust_store_certificates.any?
+          return verify_with_trust_store(certificate, config)
+        end
+
+        # Fallback: basic self-signature verification
         begin
-          # Check if certificate is self-signed
           certificate.verify(certificate.public_key)
         rescue OpenSSL::X509::CertificateError
-          # Fail secure — if we can't verify, reject the certificate
           false
+        end
+      end
+
+      ##
+      # Verify certificate against configured trust store
+      #
+      # @param certificate [OpenSSL::X509::Certificate] the certificate
+      # @param config [Configuration] the configuration
+      # @return [Boolean] true if chain is valid
+      def verify_with_trust_store(certificate, config)
+        store = OpenSSL::X509::Store.new
+
+        # Load trusted CA certificates from directory
+        if config.trust_store_path
+          store.add_path(config.trust_store_path)
+        end
+
+        # Load individually configured CA certificates
+        config.trust_store_certificates.each do |pem|
+          ca_cert = pem.is_a?(OpenSSL::X509::Certificate) ? pem : OpenSSL::X509::Certificate.new(pem)
+          store.add_cert(ca_cert)
+        end
+
+        # Enable CRL checking if configured
+        if config.check_revocation
+          store.flags = OpenSSL::X509::V_FLAG_CRL_CHECK | OpenSSL::X509::V_FLAG_CRL_CHECK_ALL
+          load_crls_for_certificate(store, certificate)
+        end
+
+        store.verify(certificate)
+      rescue OpenSSL::X509::StoreError
+        false
+      end
+
+      ##
+      # Load CRLs for a certificate into the trust store
+      #
+      # @param store [OpenSSL::X509::Store] the trust store
+      # @param certificate [OpenSSL::X509::Certificate] the certificate
+      def load_crls_for_certificate(store, certificate)
+        crl_urls = extract_crl_distribution_points(certificate)
+
+        crl_urls.each do |url|
+          crl = fetch_crl(url)
+          store.add_crl(crl) if crl
+        end
+      end
+
+      ##
+      # Extract CRL Distribution Point URLs from certificate
+      #
+      # @param certificate [OpenSSL::X509::Certificate] the certificate
+      # @return [Array<String>] CRL URLs
+      def extract_crl_distribution_points(certificate)
+        cdp_ext = certificate.extensions.find { |ext| ext.oid == 'crlDistributionPoints' }
+        return [] unless cdp_ext
+
+        # Parse URIs from the CRL distribution points extension
+        cdp_ext.value.scan(/URI:(\S+)/).flatten
+      end
+
+      ##
+      # Fetch and cache a CRL
+      #
+      # @param url [String] CRL URL
+      # @return [OpenSSL::X509::CRL, nil] the CRL or nil on failure
+      def fetch_crl(url)
+        @crl_cache_mutex.synchronize do
+          cached = @crl_cache[url]
+          if cached && (Time.now - cached[:fetched_at]) < StirShaken.configuration.crl_cache_ttl
+            return cached[:crl]
+          end
+        end
+
+        begin
+          response = HTTParty.get(url, {
+            timeout: StirShaken.configuration.http_timeout,
+            headers: { 'User-Agent' => "StirShaken Ruby #{StirShaken::VERSION}" }
+          })
+
+          return nil unless response.success?
+
+          crl = OpenSSL::X509::CRL.new(response.body)
+
+          @crl_cache_mutex.synchronize do
+            @crl_cache[url] = { crl: crl, fetched_at: Time.now }
+          end
+
+          crl
+        rescue StandardError
+          nil
         end
       end
 

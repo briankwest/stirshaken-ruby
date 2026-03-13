@@ -546,6 +546,54 @@ RSpec.describe StirShaken::Passport do
     end
   end
 
+  describe 'destination URIs (RFC 8225)' do
+    it 'creates token with destination URIs' do
+      token = StirShaken::Passport.create(
+        originating_number: originating_number,
+        destination_numbers: destination_numbers,
+        attestation: attestation,
+        certificate_url: certificate_url,
+        private_key: private_key,
+        destination_uris: ['sip:alice@example.com']
+      )
+
+      passport = StirShaken::Passport.parse(token, verify_signature: false)
+      expect(passport.destination_uris).to eq(['sip:alice@example.com'])
+      expect(passport.destination_numbers).to eq(destination_numbers)
+    end
+
+    it 'creates token without destination URIs by default' do
+      token = StirShaken::Passport.create(
+        originating_number: originating_number,
+        destination_numbers: destination_numbers,
+        attestation: attestation,
+        certificate_url: certificate_url,
+        private_key: private_key
+      )
+
+      passport = StirShaken::Passport.parse(token, verify_signature: false)
+      expect(passport.destination_uris).to eq([])
+    end
+  end
+
+  describe 'lexicographic claim ordering (RFC 8588)' do
+    it 'orders payload claims lexicographically' do
+      token = StirShaken::Passport.create(
+        originating_number: originating_number,
+        destination_numbers: destination_numbers,
+        attestation: attestation,
+        certificate_url: certificate_url,
+        private_key: private_key
+      )
+
+      # Decode the payload to check key ordering
+      parts = token.split('.')
+      payload_json = Base64.urlsafe_decode64(parts[1])
+      keys = JSON.parse(payload_json).keys
+      expect(keys).to eq(keys.sort)
+    end
+  end
+
   describe 'integration tests' do
     it 'creates and parses token with all attestation levels' do
       %w[A B C].each do |level|

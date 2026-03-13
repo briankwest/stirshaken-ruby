@@ -42,8 +42,9 @@ module StirShaken
     # @param certificate_url [String] URL to the signing certificate
     # @param private_key [OpenSSL::PKey::EC] private key for signing
     # @return [String] encoded JWT token
-    def self.create(originating_number:, destination_numbers:, attestation:, 
-                   origination_id: nil, certificate_url:, private_key:)
+    def self.create(originating_number:, destination_numbers:, attestation:,
+                   origination_id: nil, certificate_url:, private_key:,
+                   destination_uris: nil)
       
       # Validate inputs
       Attestation.validate!(attestation)
@@ -61,14 +62,14 @@ module StirShaken
         'x5u' => certificate_url
       }
 
-      # Create payload with claims in lexicographic order (RFC 8588 requirement)
+      # Build payload and enforce lexicographic key ordering (RFC 8588)
       payload = {
         'attest' => attestation,
-        'dest' => { 'tn' => destination_numbers },
+        'dest' => build_dest_claim(destination_numbers, destination_uris),
         'iat' => Time.now.to_i,
         'orig' => { 'tn' => originating_number },
         'origid' => origination_id
-      }
+      }.sort.to_h
 
       # Sign the token
       JWT.encode(payload, private_key, ALGORITHM, header)
@@ -123,6 +124,14 @@ module StirShaken
     # @return [Array<String>] the destination numbers
     def destination_numbers
       payload.dig('dest', 'tn') || []
+    end
+
+    ##
+    # Get the destination URIs
+    #
+    # @return [Array<String>] the destination URIs
+    def destination_uris
+      payload.dig('dest', 'uri') || []
     end
 
     ##
@@ -183,6 +192,7 @@ module StirShaken
         payload: payload,
         originating_number: originating_number,
         destination_numbers: destination_numbers,
+        destination_uris: destination_uris,
         attestation: attestation,
         origination_id: origination_id,
         issued_at: issued_at,
@@ -259,6 +269,13 @@ module StirShaken
       unless number.match?(/^\+[1-9]\d{1,14}$/)
         raise InvalidPhoneNumberError, "Invalid phone number format: #{number}"
       end
+    end
+
+    def self.build_dest_claim(destination_numbers, destination_uris)
+      dest = {}
+      dest['tn'] = destination_numbers if destination_numbers && destination_numbers.any?
+      dest['uri'] = destination_uris if destination_uris && destination_uris.any?
+      dest
     end
 
     def validate_phone_number!(number)

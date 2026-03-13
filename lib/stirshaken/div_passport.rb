@@ -136,6 +136,44 @@ module StirShaken
     end
 
     ##
+    # Verify DIV PASSporT chains back to original SHAKEN PASSporT (RFC 8946)
+    #
+    # @param div_token [String] the DIV PASSporT JWT token
+    # @param shaken_token [String] the original SHAKEN PASSporT JWT token
+    # @param div_public_key [OpenSSL::PKey::EC] public key for DIV token verification
+    # @param shaken_public_key [OpenSSL::PKey::EC] public key for SHAKEN token verification (optional)
+    # @return [Hash] verification result with :valid and :reason
+    def self.verify_chain(div_token:, shaken_token:, div_public_key:, shaken_public_key: nil)
+      # Parse and verify DIV PASSporT
+      div_passport = parse(div_token, public_key: div_public_key, verify_signature: true)
+
+      # Parse original SHAKEN PASSporT
+      shaken_passport = if shaken_public_key
+                          Passport.parse(shaken_token, public_key: shaken_public_key, verify_signature: true)
+                        else
+                          Passport.parse(shaken_token, verify_signature: false)
+                        end
+
+      # Verify chain: originating number must match
+      unless div_passport.originating_number == shaken_passport.originating_number
+        return { valid: false, reason: 'Originating number mismatch between DIV and SHAKEN PASSporTs' }
+      end
+
+      # Verify chain: origid must match
+      unless div_passport.origination_id == shaken_passport.origination_id
+        return { valid: false, reason: 'Origination ID mismatch between DIV and SHAKEN PASSporTs' }
+      end
+
+      # Verify chain: DIV original destination should match SHAKEN destination
+      shaken_dests = shaken_passport.destination_numbers
+      unless shaken_dests.include?(div_passport.original_destination)
+        return { valid: false, reason: 'DIV original destination not found in SHAKEN destinations' }
+      end
+
+      { valid: true, div_passport: div_passport, shaken_passport: shaken_passport }
+    end
+
+    ##
     # Get the original destination (where call was originally going)
     #
     # @return [String] the original destination number

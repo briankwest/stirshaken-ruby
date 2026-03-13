@@ -7,7 +7,7 @@ module StirShaken
   # This class implements the SIP Identity header format as specified in RFC 8224
   # for carrying PASSporT tokens in SIP messages.
   class SipIdentity
-    attr_reader :passport_token, :info_url, :algorithm, :extension
+    attr_reader :passport_token, :info_url, :algorithm, :extension, :canon
 
     ##
     # Initialize a SIP Identity object
@@ -16,11 +16,12 @@ module StirShaken
     # @param info_url [String] URL to certificate information
     # @param algorithm [String] the signing algorithm
     # @param extension [String] the PASSporT extension
-    def initialize(passport_token:, info_url:, algorithm:, extension:)
+    def initialize(passport_token:, info_url:, algorithm:, extension:, canon: nil)
       @passport_token = passport_token
       @info_url = info_url
       @algorithm = algorithm
       @extension = extension
+      @canon = canon
     end
 
     ##
@@ -32,25 +33,26 @@ module StirShaken
     # @param extension [String] the extension (default: shaken)
     # @param additional_info [Hash] additional parameters
     # @return [String] the complete SIP Identity header value
-    def self.create(passport_token:, certificate_url:, algorithm: 'ES256', 
-                   extension: 'shaken', additional_info: {})
-      
+    def self.create(passport_token:, certificate_url:, algorithm: 'ES256',
+                   extension: 'shaken', additional_info: {}, canon: nil)
+
       # Build the header value
       header_parts = [passport_token]
-      
+
       # Add required parameters
       params = []
       params << "info=<#{certificate_url}>"
       params << "alg=#{algorithm}"
       params << "ppt=#{extension}"
-      
+      params << "canon=#{canon}" if canon
+
       # Add any additional parameters (with header injection protection)
       additional_info.each do |key, value|
         sanitize_header_param!(key.to_s)
         sanitize_header_param!(value.to_s)
         params << "#{key}=#{value}"
       end
-      
+
       # Combine token and parameters
       "#{passport_token};#{params.join(';')}"
     end
@@ -78,26 +80,38 @@ module StirShaken
       info_url = extract_info_url(parameters['info'])
       algorithm = parameters['alg']
       extension = parameters['ppt']
-      
+      canon = parameters['canon']
+
       # Validate required parameters
       unless info_url
         raise InvalidIdentityHeaderError, 'Missing info parameter in SIP Identity header'
       end
-      
+
       unless algorithm
         raise InvalidIdentityHeaderError, 'Missing alg parameter in SIP Identity header'
       end
-      
+
       unless extension
         raise InvalidIdentityHeaderError, 'Missing ppt parameter in SIP Identity header'
       end
-      
+
       new(
         passport_token: passport_token,
         info_url: info_url,
         algorithm: algorithm,
-        extension: extension
+        extension: extension,
+        canon: canon
       )
+    end
+
+    ##
+    # Parse multiple SIP Identity headers (RFC 8224 §4.1)
+    #
+    # @param header_values [String, Array<String>] one or more Identity header values
+    # @return [Array<SipIdentity>] parsed SIP Identity objects
+    def self.parse_multiple(header_values)
+      headers = header_values.is_a?(Array) ? header_values : [header_values]
+      headers.map { |h| parse(h) }
     end
 
     ##
@@ -109,7 +123,8 @@ module StirShaken
         passport_token: passport_token,
         certificate_url: info_url,
         algorithm: algorithm,
-        extension: extension
+        extension: extension,
+        canon: canon
       )
     end
 
@@ -134,7 +149,7 @@ module StirShaken
       end
       
       # Validate extension
-      unless extension == 'shaken'
+      unless %w[shaken div].include?(extension)
         raise InvalidIdentityHeaderError, "Unsupported extension: #{extension}"
       end
       
@@ -168,12 +183,14 @@ module StirShaken
     #
     # @return [Hash] hash representation
     def to_h
-      {
+      hash = {
         passport_token: passport_token,
         info_url: info_url,
         algorithm: algorithm,
         extension: extension
       }
+      hash[:canon] = canon if canon
+      hash
     end
 
     private

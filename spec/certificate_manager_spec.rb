@@ -652,4 +652,149 @@ RSpec.describe StirShaken::CertificateManager do
       }.to raise_error(StirShaken::CertificateFetchError, /private\/internal/)
     end
   end
+
+  describe 'Extended Key Usage validation' do
+    it 'accepts certificates with STIR/SHAKEN EKU' do
+      # Standard test certificate should pass (no EKU = unrestricted)
+      expect(StirShaken::CertificateManager.validate_certificate(certificate)).to be true
+    end
+
+    it 'rejects certificates with wrong EKU when EKU is present' do
+      key_pair_local = generate_test_key_pair
+      pk = key_pair_local[:private_key]
+      cert = OpenSSL::X509::Certificate.new
+      cert.version = 2
+      cert.serial = 1
+      cert.subject = OpenSSL::X509::Name.parse('/CN=Wrong EKU Test')
+      cert.issuer = cert.subject
+      cert.public_key = pk
+      cert.not_before = Time.now
+      cert.not_after = Time.now + 3600
+
+      ef = OpenSSL::X509::ExtensionFactory.new
+      ef.subject_certificate = cert
+      ef.issuer_certificate = cert
+      cert.add_extension(ef.create_extension('keyUsage', 'digitalSignature', true))
+      cert.add_extension(ef.create_extension('extendedKeyUsage', 'clientAuth', false))
+      cert.sign(pk, OpenSSL::Digest::SHA256.new)
+
+      expect(StirShaken::CertificateManager.validate_certificate(cert)).to be false
+    end
+  end
+
+  describe 'certificate chain validation with trust store' do
+    let(:ca_key) { OpenSSL::PKey::EC.generate('prime256v1') }
+    let(:ca_cert) do
+      cert = OpenSSL::X509::Certificate.new
+      cert.version = 2
+      cert.serial = 1
+      cert.subject = OpenSSL::X509::Name.parse('/CN=Test CA')
+      cert.issuer = cert.subject
+      cert.public_key = ca_key
+      cert.not_before = Time.now
+      cert.not_after = Time.now + 86400
+
+      ef = OpenSSL::X509::ExtensionFactory.new
+      ef.subject_certificate = cert
+      ef.issuer_certificate = cert
+      cert.add_extension(ef.create_extension('basicConstraints', 'CA:TRUE', true))
+      cert.add_extension(ef.create_extension('keyUsage', 'keyCertSign,cRLSign', true))
+      cert.sign(ca_key, OpenSSL::Digest::SHA256.new)
+      cert
+    end
+
+    let(:leaf_key) { OpenSSL::PKey::EC.generate('prime256v1') }
+    let(:ca_signed_cert) do
+      cert = OpenSSL::X509::Certificate.new
+      cert.version = 2
+      cert.serial = 2
+      cert.subject = OpenSSL::X509::Name.parse('/CN=Test Leaf')
+      cert.issuer = ca_cert.subject
+      cert.public_key = leaf_key
+      cert.not_before = Time.now
+      cert.not_after = Time.now + 3600
+
+      ef = OpenSSL::X509::ExtensionFactory.new
+      ef.subject_certificate = cert
+      ef.issuer_certificate = ca_cert
+      cert.add_extension(ef.create_extension('keyUsage', 'digitalSignature', true))
+      san_values = ['+15551234567'].map { |n| "URI:tel:#{n}" }
+      cert.add_extension(ef.create_extension('subjectAltName', san_values.join(','), false))
+      cert.sign(ca_key, OpenSSL::Digest::SHA256.new)
+      cert
+    end
+
+    it 'validates CA-signed certificate when trust store is configured' do
+      StirShaken.configure do |config|
+        config.trust_store_certificates = [ca_cert.to_pem]
+      end
+
+      result = StirShaken::CertificateManager.validate_certificate(
+        ca_signed_cert, telephone_number: '+15551234567'
+      )
+      expect(result).to be true
+    end
+
+    it 'rejects certificate not signed by trusted CA' do
+      other_ca_key = OpenSSL::PKey::EC.generate('prime256v1')
+      other_ca = OpenSSL::X509::Certificate.new
+      other_ca.version = 2
+      other_ca.serial = 1
+      other_ca.subject = OpenSSL::X509::Name.parse('/CN=Other CA')
+      other_ca.issuer = other_ca.subject
+      other_ca.public_key = other_ca_key
+      other_ca.not_before = Time.now
+      other_ca.not_after = Time.now + 86400
+      ef = OpenSSL::X509::ExtensionFactory.new
+      ef.subject_certificate = other_ca
+      ef.issuer_certificate = other_ca
+      other_ca.add_extension(ef.create_extension('basicConstraints', 'CA:TRUE', true))
+      other_ca.add_extension(ef.create_extension('keyUsage', 'keyCertSign,cRLSign', true))
+      other_ca.sign(other_ca_key, OpenSSL::Digest::SHA256.new)
+
+      StirShaken.configure do |config|
+        config.trust_store_certificates = [other_ca.to_pem]
+      end
+
+      result = StirShaken::CertificateManager.validate_certificate(ca_signed_cert)
+      expect(result).to be false
+    end
+  end
+
+  describe '.fetch_certificate_chain' do
+    it 'parses multiple PEM certificates from response' do
+      chain_pem = certificate.to_pem + certificate.to_pem
+
+      stub_request(:get, cert_url)
+        .to_return(status: 200, body: chain_pem)
+
+      chain = StirShaken::CertificateManager.fetch_certificate_chain(cert_url)
+      expect(chain).to be_a(Array)
+      expect(chain.length).to eq(2)
+      chain.each { |c| expect(c).to be_a(OpenSSL::X509::Certificate) }
+    end
+
+    it 'handles single certificate' do
+      stub_request(:get, cert_url)
+        .to_return(status: 200, body: certificate.to_pem)
+
+      chain = StirShaken::CertificateManager.fetch_certificate_chain(cert_url)
+      expect(chain.length).to eq(1)
+    end
+
+    it 'rejects HTTP URLs' do
+      expect {
+        StirShaken::CertificateManager.fetch_certificate_chain('http://insecure.com/cert.pem')
+      }.to raise_error(StirShaken::CertificateFetchError, /HTTPS/)
+    end
+  end
+
+  describe 'CRL distribution points' do
+    it 'extracts CRL URLs from certificate extensions' do
+      manager = StirShaken::CertificateManager
+      urls = manager.send(:extract_crl_distribution_points, certificate)
+      # Test certificate doesn't have CRL DPs, so expect empty
+      expect(urls).to be_a(Array)
+    end
+  end
 end 

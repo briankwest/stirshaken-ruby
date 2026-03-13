@@ -308,6 +308,20 @@ module StirShaken
     end
 
     ##
+    # Verify multiple SIP Identity headers (RFC 8224 §4.1)
+    #
+    # @param identity_headers [Array<String>] array of Identity header values
+    # @param originating_number [String] expected originating number (optional)
+    # @param destination_number [String] expected destination number (optional)
+    # @param max_age [Integer] maximum age of token in seconds
+    # @return [Array<VerificationResult>] array of verification results
+    def verify_multiple(identity_headers, originating_number: nil, destination_number: nil, max_age: StirShaken.configuration.default_max_age)
+      identity_headers.map do |header|
+        verify_call(header, originating_number: originating_number, destination_number: destination_number, max_age: max_age)
+      end
+    end
+
+    ##
     # Get verification statistics
     #
     # @return [Hash] verification statistics

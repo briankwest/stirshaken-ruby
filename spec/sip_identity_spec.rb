@@ -498,6 +498,84 @@ RSpec.describe StirShaken::SipIdentity do
     end
   end
 
+  describe 'canon parameter (RFC 8224)' do
+    it 'includes canon parameter when provided' do
+      header = StirShaken::SipIdentity.create(
+        passport_token: passport_token,
+        certificate_url: certificate_url,
+        canon: 'addr'
+      )
+
+      expect(header).to include('canon=addr')
+
+      parsed = StirShaken::SipIdentity.parse(header)
+      expect(parsed.canon).to eq('addr')
+    end
+
+    it 'omits canon parameter when not provided' do
+      header = StirShaken::SipIdentity.create(
+        passport_token: passport_token,
+        certificate_url: certificate_url
+      )
+
+      expect(header).not_to include('canon=')
+    end
+
+    it 'preserves canon through roundtrip' do
+      original = StirShaken::SipIdentity.new(
+        passport_token: passport_token,
+        info_url: certificate_url,
+        algorithm: 'ES256',
+        extension: 'shaken',
+        canon: 'addr'
+      )
+
+      header_str = original.to_header
+      parsed = StirShaken::SipIdentity.parse(header_str)
+      expect(parsed.canon).to eq('addr')
+    end
+  end
+
+  describe '.parse_multiple (RFC 8224 §4.1)' do
+    it 'parses array of Identity headers' do
+      header1 = StirShaken::SipIdentity.create(
+        passport_token: passport_token,
+        certificate_url: certificate_url
+      )
+      header2 = StirShaken::SipIdentity.create(
+        passport_token: passport_token,
+        certificate_url: 'https://other.example.com/cert.pem'
+      )
+
+      results = StirShaken::SipIdentity.parse_multiple([header1, header2])
+      expect(results.length).to eq(2)
+      results.each { |r| expect(r).to be_a(StirShaken::SipIdentity) }
+    end
+
+    it 'wraps single header in array' do
+      header = StirShaken::SipIdentity.create(
+        passport_token: passport_token,
+        certificate_url: certificate_url
+      )
+
+      results = StirShaken::SipIdentity.parse_multiple(header)
+      expect(results.length).to eq(1)
+    end
+  end
+
+  describe 'DIV extension support in validate!' do
+    it 'accepts ppt=div extension' do
+      sip_identity = StirShaken::SipIdentity.new(
+        passport_token: passport_token,
+        info_url: certificate_url,
+        algorithm: 'ES256',
+        extension: 'div'
+      )
+
+      expect { sip_identity.validate! }.not_to raise_error
+    end
+  end
+
   describe 'error handling' do
     it 'provides meaningful error messages' do
       expect {
