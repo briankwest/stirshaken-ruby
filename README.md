@@ -49,7 +49,7 @@ sequenceDiagram
     Passport-->>AuthService: passport_token
     AuthService->>SipIdentity: create(token, cert_url)
     SipIdentity-->>AuthService: Identity header string
-    AuthService-->>App: "eyJ...;info=<url>;alg=ES256;ppt=shaken"
+    AuthService-->>App: Identity header string
 ```
 
 ## Call Verification Flow
@@ -67,15 +67,15 @@ sequenceDiagram
     SipIdentity-->>VerifySvc: token + info_url
 
     VerifySvc->>CertMgr: fetch_certificate(info_url)
-    Note over CertMgr: Cache check -> HTTPS fetch -> SSRF check
+    Note over CertMgr: Cache check, HTTPS fetch, SSRF check
     CertMgr-->>VerifySvc: X.509 certificate
 
     VerifySvc->>CertMgr: validate_certificate(cert)
-    Note over CertMgr: Expiry + KeyUsage + EKU + TNAuthList + Chain
+    Note over CertMgr: Expiry, KeyUsage, EKU, TNAuthList, Chain
     CertMgr-->>VerifySvc: valid?
 
-    VerifySvc->>Passport: parse(token, public_key, verify: true)
-    Note over Passport: Signature + Claims + Freshness
+    VerifySvc->>Passport: parse(token, public_key)
+    Note over Passport: Signature, Claims, Freshness
     Passport-->>VerifySvc: passport
 
     VerifySvc-->>App: VerificationResult(valid, attestation, confidence)
@@ -92,10 +92,10 @@ sequenceDiagram
     OrigSP->>DivSP: INVITE + SHAKEN Identity header
     Note over DivSP: Parse original PASSporT
     DivSP->>DivSP: create_div_passport(original, new_dest, reason)
-    Note over DivSP: Attestation reduced (A->B, B->C)
+    Note over DivSP: Attestation reduced A to B, B to C
     DivSP->>TermSP: INVITE + SHAKEN header + DIV header
     TermSP->>TermSP: verify_chain(div_token, shaken_token)
-    Note over TermSP: Validates origid + orig.tn + dest chain
+    Note over TermSP: Validates origid, orig.tn, dest chain
 ```
 
 ## Certificate Validation Pipeline
@@ -103,20 +103,20 @@ sequenceDiagram
 ```mermaid
 flowchart TD
     A[Certificate URL] --> B{HTTPS?}
-    B -->|No| X1[Reject: must use HTTPS]
+    B -->|No| X1[Reject - must use HTTPS]
     B -->|Yes| C{SSRF Safe?}
-    C -->|Private IP/Localhost| X2[Reject: SSRF blocked]
+    C -->|Private IP or Localhost| X2[Reject - SSRF blocked]
     C -->|Safe| D{Rate Limited?}
-    D -->|Over 10/min| X3[Reject: rate limit]
+    D -->|Exceeded| X3[Reject - rate limit]
     D -->|OK| E[Fetch Certificate]
     E --> F{Expired?}
-    F -->|Yes| X4[Reject: expired]
+    F -->|Yes| X4[Reject - expired]
     F -->|No| G{Key Usage?}
-    G -->|No digitalSignature| X5[Reject: wrong key usage]
+    G -->|No digitalSignature| X5[Reject - wrong key usage]
     G -->|OK| H{EKU Present?}
-    H -->|Yes, wrong OID| X6[Reject: wrong EKU]
+    H -->|Wrong OID| X6[Reject - wrong EKU]
     H -->|OK or absent| I{Trust Store?}
-    I -->|Configured| J[Chain validation via X509::Store]
+    I -->|Configured| J[Chain validation via OpenSSL Store]
     I -->|Not configured| K[Self-signature check]
     J --> L{CRL Check?}
     L -->|Enabled| M[Fetch & verify CRL]
