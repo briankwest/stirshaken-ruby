@@ -496,6 +496,108 @@ RSpec.describe StirShaken::DivPassport do
     end
   end
 
+  describe '.verify_chain' do
+    let(:shaken_token) do
+      StirShaken::Passport.create(
+        originating_number: originating_number,
+        destination_numbers: [original_destination],
+        attestation: 'A',
+        certificate_url: certificate_url,
+        private_key: private_key
+      )
+    end
+
+    let(:div_token) do
+      original = StirShaken::Passport.parse(shaken_token, verify_signature: false)
+      StirShaken::DivPassport.create_div(
+        original_passport: original,
+        new_destination: new_destination,
+        original_destination: original_destination,
+        diversion_reason: 'forwarding',
+        certificate_url: certificate_url,
+        private_key: private_key
+      )
+    end
+
+    it 'validates a correct DIV-SHAKEN chain' do
+      result = StirShaken::DivPassport.verify_chain(
+        div_token: div_token,
+        shaken_token: shaken_token,
+        div_public_key: public_key,
+        shaken_public_key: public_key
+      )
+
+      expect(result[:valid]).to be true
+      expect(result[:div_passport]).to be_a(StirShaken::DivPassport)
+      expect(result[:shaken_passport]).to be_a(StirShaken::Passport)
+    end
+
+    it 'rejects chain with mismatched originating number' do
+      # Create SHAKEN token with different originating number
+      other_shaken = StirShaken::Passport.create(
+        originating_number: '+15559999999',
+        destination_numbers: [original_destination],
+        attestation: 'A',
+        certificate_url: certificate_url,
+        private_key: private_key
+      )
+
+      result = StirShaken::DivPassport.verify_chain(
+        div_token: div_token,
+        shaken_token: other_shaken,
+        div_public_key: public_key
+      )
+
+      expect(result[:valid]).to be false
+      expect(result[:reason]).to include('Originating number mismatch')
+    end
+
+    it 'rejects chain with mismatched origination ID' do
+      # Create a new DIV token with different origination ID
+      original = StirShaken::Passport.parse(shaken_token, verify_signature: false)
+      mismatched_div = StirShaken::DivPassport.create_div(
+        original_passport: original,
+        new_destination: new_destination,
+        original_destination: original_destination,
+        diversion_reason: 'forwarding',
+        origination_id: 'different-id',
+        certificate_url: certificate_url,
+        private_key: private_key
+      )
+
+      result = StirShaken::DivPassport.verify_chain(
+        div_token: mismatched_div,
+        shaken_token: shaken_token,
+        div_public_key: public_key
+      )
+
+      expect(result[:valid]).to be false
+      expect(result[:reason]).to include('Origination ID mismatch')
+    end
+
+    it 'rejects chain when DIV original destination not in SHAKEN destinations' do
+      # Create SHAKEN with different destination
+      other_shaken = StirShaken::Passport.create(
+        originating_number: originating_number,
+        destination_numbers: ['+15558888888'],
+        attestation: 'A',
+        certificate_url: certificate_url,
+        private_key: private_key,
+        origination_id: StirShaken::Passport.parse(shaken_token, verify_signature: false).origination_id
+      )
+
+      # Create DIV from original shaken (which has original_destination)
+      result = StirShaken::DivPassport.verify_chain(
+        div_token: div_token,
+        shaken_token: other_shaken,
+        div_public_key: public_key
+      )
+
+      expect(result[:valid]).to be false
+      expect(result[:reason]).to include('not found in SHAKEN destinations')
+    end
+  end
+
   describe 'integration with standard PASSporT' do
     it 'inherits standard PASSporT functionality' do
       div_passport = StirShaken::DivPassport.parse(

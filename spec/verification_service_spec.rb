@@ -377,6 +377,34 @@ RSpec.describe StirShaken::VerificationService do
     end
   end
 
+  describe '#verify_multiple' do
+    it 'verifies multiple Identity headers' do
+      headers = 3.times.map do
+        auth_service.sign_call(
+          originating_number: '+15551234567',
+          destination_number: '+15559876543',
+          attestation: 'A'
+        )
+      end
+
+      results = verification_service.verify_multiple(headers)
+      expect(results.length).to eq(3)
+      results.each { |r| expect(r.valid?).to be true }
+    end
+
+    it 'handles mix of valid and invalid headers' do
+      valid_header = auth_service.sign_call(
+        originating_number: '+15551234567',
+        destination_number: '+15559876543',
+        attestation: 'A'
+      )
+
+      results = verification_service.verify_multiple([valid_header, 'invalid'])
+      expect(results[0].valid?).to be true
+      expect(results[1].valid?).to be false
+    end
+  end
+
   describe 'configurable default_max_age' do
     it 'uses configured default_max_age' do
       StirShaken.configure { |c| c.default_max_age = 120 }
