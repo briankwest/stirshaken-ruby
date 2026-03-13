@@ -49,6 +49,17 @@ RSpec.describe StirShaken do
     it 'yields configuration object in configure block' do
       expect { |b| StirShaken.configure(&b) }.to yield_with_args(StirShaken::Configuration)
     end
+
+    it 'returns security summary' do
+      config = StirShaken.configuration
+      summary = config.security_summary
+      expect(summary).to be_a(Hash)
+      expect(summary[:http_timeout]).to eq(30)
+      expect(summary[:cache_ttl]).to eq(3600)
+      expect(summary[:default_attestation]).to eq('C')
+      expect(summary[:security_validated]).to be true
+      expect(summary[:validation_timestamp]).to be_a(String)
+    end
   end
 
   describe 'security validation' do
@@ -186,6 +197,40 @@ RSpec.describe StirShaken do
       it 'accepts attestation C' do
         config.default_attestation = 'C'
         expect { config.send(:validate_attestation_security!) }.not_to raise_error
+      end
+    end
+
+    describe 'max age security' do
+      it 'rejects max_age below minimum' do
+        config = StirShaken::Configuration.new
+        config.default_max_age = 0
+        expect { config.send(:validate_max_age_security!) }.to raise_error(StirShaken::ConfigurationError, /positive number/)
+      end
+
+      it 'rejects max_age above maximum' do
+        config = StirShaken::Configuration.new
+        config.default_max_age = 1000
+        expect { config.send(:validate_max_age_security!) }.to raise_error(StirShaken::ConfigurationError, /too high/)
+      end
+
+      it 'rejects negative max_age' do
+        config = StirShaken::Configuration.new
+        config.default_max_age = -1
+        expect { config.send(:validate_max_age_security!) }.to raise_error(StirShaken::ConfigurationError, /positive number/)
+      end
+
+      it 'accepts valid max_age at boundaries' do
+        config = StirShaken::Configuration.new
+        config.default_max_age = 1
+        expect { config.send(:validate_max_age_security!) }.not_to raise_error
+
+        config.default_max_age = 900
+        expect { config.send(:validate_max_age_security!) }.not_to raise_error
+      end
+
+      it 'accepts default max_age value' do
+        config = StirShaken::Configuration.new
+        expect { config.send(:validate_max_age_security!) }.not_to raise_error
       end
     end
 

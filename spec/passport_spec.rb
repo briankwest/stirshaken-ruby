@@ -413,6 +413,40 @@ RSpec.describe StirShaken::Passport do
       expect(passport.expired?(max_age: 60)).to be false
     end
 
+    it 'treats iat exactly at clock skew boundary as not expired' do
+      passport = StirShaken::Passport.new(
+        header: {
+          'alg' => 'ES256', 'typ' => 'passport', 'ppt' => 'shaken',
+          'x5u' => certificate_url
+        },
+        payload: {
+          'attest' => attestation,
+          'dest' => { 'tn' => destination_numbers },
+          'iat' => Time.now.to_i + 60, # exactly at boundary
+          'orig' => { 'tn' => originating_number },
+          'origid' => 'test-id'
+        }
+      )
+      expect(passport.expired?(max_age: 60)).to be false
+    end
+
+    it 'treats iat just past clock skew boundary as expired' do
+      passport = StirShaken::Passport.new(
+        header: {
+          'alg' => 'ES256', 'typ' => 'passport', 'ppt' => 'shaken',
+          'x5u' => certificate_url
+        },
+        payload: {
+          'attest' => attestation,
+          'dest' => { 'tn' => destination_numbers },
+          'iat' => Time.now.to_i + 61, # just past boundary
+          'orig' => { 'tn' => originating_number },
+          'origid' => 'test-id'
+        }
+      )
+      expect(passport.expired?(max_age: 60)).to be true
+    end
+
     it 'returns true when issued_at is missing' do
       passport = StirShaken::Passport.new(
         header: {},
@@ -483,6 +517,32 @@ RSpec.describe StirShaken::Passport do
           StirShaken::Passport.validate_phone_number!(number)
         }.to raise_error(StirShaken::InvalidPhoneNumberError)
       end
+    end
+  end
+
+  describe 'JWT alg:none attack prevention' do
+    it 'rejects tokens with alg set to none' do
+      # Manually craft a token with alg: "none"
+      header = Base64.urlsafe_encode64({ 'alg' => 'none', 'typ' => 'passport', 'ppt' => 'shaken', 'x5u' => certificate_url }.to_json, padding: false)
+      payload_data = { 'attest' => 'A', 'dest' => { 'tn' => ['+15559876543'] }, 'iat' => Time.now.to_i, 'orig' => { 'tn' => '+15551234567' }, 'origid' => 'test' }
+      payload_b64 = Base64.urlsafe_encode64(payload_data.to_json, padding: false)
+      forged_token = "#{header}.#{payload_b64}."
+
+      expect {
+        StirShaken::Passport.parse(forged_token, public_key: public_key, verify_signature: true)
+      }.to raise_error(StirShaken::InvalidTokenError)
+    end
+
+    it 'rejects tokens with alg none even without verification' do
+      header = Base64.urlsafe_encode64({ 'alg' => 'none', 'typ' => 'passport', 'ppt' => 'shaken', 'x5u' => certificate_url }.to_json, padding: false)
+      payload_data = { 'attest' => 'A', 'dest' => { 'tn' => ['+15559876543'] }, 'iat' => Time.now.to_i, 'orig' => { 'tn' => '+15551234567' }, 'origid' => 'test' }
+      payload_b64 = Base64.urlsafe_encode64(payload_data.to_json, padding: false)
+      forged_token = "#{header}.#{payload_b64}."
+
+      # Even when parsing without verification, our validate! should reject because alg != ES256
+      expect {
+        StirShaken::Passport.parse(forged_token, verify_signature: false)
+      }.to raise_error(StirShaken::PassportValidationError, /Invalid algorithm/)
     end
   end
 

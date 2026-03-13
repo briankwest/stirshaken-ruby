@@ -403,6 +403,27 @@ RSpec.describe StirShaken::VerificationService do
     end
   end
 
+  describe 'thread safety' do
+    it 'handles concurrent verify_call without corrupting stats' do
+      identity_header = auth_service.sign_call(
+        originating_number: '+15551234567',
+        destination_number: '+15559876543',
+        attestation: 'A'
+      )
+
+      threads = []
+      10.times do
+        threads << Thread.new { verification_service.verify_call(identity_header) }
+        threads << Thread.new { verification_service.verify_call('invalid') }
+      end
+      threads.each(&:join)
+
+      stats = verification_service.stats
+      expect(stats[:total_verifications]).to eq(20)
+      expect(stats[:successful_verifications] + stats[:failed_verifications]).to eq(20)
+    end
+  end
+
   describe 'VerificationResult' do
     let(:passport) do
       token = auth_service.create_passport(

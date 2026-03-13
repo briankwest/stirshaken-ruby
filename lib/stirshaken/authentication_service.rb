@@ -65,7 +65,7 @@ module StirShaken
       rescue => error
         # Log authentication failure
         SecurityLogger.log_security_failure(:authentication_failure, error, {
-          originating_number: SecurityLogger.send(:mask_phone_number, originating_number),
+          originating_number: SecurityLogger.mask_phone_number( originating_number),
           destination_count: Array(destination_number).size,
           attestation: attestation
         })
@@ -116,8 +116,8 @@ module StirShaken
 
         # Log successful DIV PASSporT creation
         SecurityLogger.log_security_event(:div_passport_created, {
-          originating_number: SecurityLogger.send(:mask_phone_number, original_passport.originating_number),
-          original_destination: SecurityLogger.send(:mask_phone_number, original_destination),
+          originating_number: SecurityLogger.mask_phone_number( original_passport.originating_number),
+          original_destination: SecurityLogger.mask_phone_number( original_destination),
           new_destination_count: Array(new_destination).size,
           diversion_reason: diversion_reason,
           attestation: original_passport.attestation
@@ -127,8 +127,8 @@ module StirShaken
       rescue => error
         # Log DIV PASSporT creation failure
         SecurityLogger.log_security_failure(:div_passport_creation_failure, error, {
-          originating_number: SecurityLogger.send(:mask_phone_number, original_passport.originating_number),
-          original_destination: SecurityLogger.send(:mask_phone_number, original_destination),
+          originating_number: SecurityLogger.mask_phone_number( original_passport.originating_number),
+          original_destination: SecurityLogger.mask_phone_number( original_destination),
           diversion_reason: diversion_reason
         })
         raise
@@ -162,7 +162,7 @@ module StirShaken
 
         # Log successful DIV PASSporT creation from header
         SecurityLogger.log_security_event(:div_passport_from_header_created, {
-          original_destination: SecurityLogger.send(:mask_phone_number, original_destination),
+          original_destination: SecurityLogger.mask_phone_number( original_destination),
           new_destination_count: Array(new_destination).size,
           diversion_reason: diversion_reason,
           verified_original: verify_original
@@ -172,7 +172,7 @@ module StirShaken
       rescue => error
         # Log DIV PASSporT creation failure
         SecurityLogger.log_security_failure(:div_passport_from_header_failure, error, {
-          original_destination: SecurityLogger.send(:mask_phone_number, original_destination),
+          original_destination: SecurityLogger.mask_phone_number( original_destination),
           diversion_reason: diversion_reason
         })
         raise
@@ -212,7 +212,7 @@ module StirShaken
 
         # Log successful diverted call signing
         SecurityLogger.log_security_event(:diverted_call_signed, {
-          original_destination: SecurityLogger.send(:mask_phone_number, original_destination),
+          original_destination: SecurityLogger.mask_phone_number( original_destination),
           new_destination_count: Array(new_destination).size,
           diversion_reason: diversion_reason
         }, severity: :low)
@@ -224,7 +224,7 @@ module StirShaken
       rescue => error
         # Log diverted call signing failure
         SecurityLogger.log_security_failure(:diverted_call_signing_failure, error, {
-          original_destination: SecurityLogger.send(:mask_phone_number, original_destination),
+          original_destination: SecurityLogger.mask_phone_number( original_destination),
           diversion_reason: diversion_reason
         })
         raise
@@ -278,8 +278,8 @@ module StirShaken
 
         # Log successful call forwarding setup
         SecurityLogger.log_security_event(:call_forwarding_created, {
-          originating_number: SecurityLogger.send(:mask_phone_number, originating_number),
-          original_destination: SecurityLogger.send(:mask_phone_number, original_destination),
+          originating_number: SecurityLogger.mask_phone_number( originating_number),
+          original_destination: SecurityLogger.mask_phone_number( original_destination),
           new_destination_count: Array(new_destination).size,
           original_attestation: original_attestation,
           forwarded_attestation: forwarded_attestation,
@@ -303,8 +303,8 @@ module StirShaken
       rescue => error
         # Log call forwarding failure
         SecurityLogger.log_security_failure(:call_forwarding_failure, error, {
-          originating_number: SecurityLogger.send(:mask_phone_number, original_call_info[:originating_number]),
-          original_destination: SecurityLogger.send(:mask_phone_number, original_call_info[:destination_number])
+          originating_number: SecurityLogger.mask_phone_number( original_call_info[:originating_number]),
+          original_destination: SecurityLogger.mask_phone_number( original_call_info[:destination_number])
         })
         raise
       end

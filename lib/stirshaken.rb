@@ -80,6 +80,8 @@ module StirShaken
     MAX_HTTP_TIMEOUT = 120
     MIN_CACHE_TTL = 300      # 5 minutes
     MAX_CACHE_TTL = 86400    # 24 hours
+    MIN_MAX_AGE = 1          # 1 second
+    MAX_MAX_AGE = 900        # 15 minutes
     VALID_ATTESTATIONS = %w[A B C].freeze
 
     def initialize
@@ -102,6 +104,7 @@ module StirShaken
       validate_timeout_security!
       validate_cache_security!
       validate_attestation_security!
+      validate_max_age_security!
       
       SecurityLogger.log_security_event(:configuration_validated, {
         http_timeout: http_timeout,
@@ -172,8 +175,28 @@ module StirShaken
     # @raise [ConfigurationError] if attestation is invalid
     def validate_attestation_security!
       unless VALID_ATTESTATIONS.include?(default_attestation)
-        raise ConfigurationError, 
+        raise ConfigurationError,
               "Invalid default attestation '#{default_attestation}'. Must be one of: #{VALID_ATTESTATIONS.join(', ')}"
+      end
+    end
+
+    ##
+    # Validate default max age security
+    #
+    # @raise [ConfigurationError] if max age is invalid
+    def validate_max_age_security!
+      unless default_max_age.is_a?(Numeric) && default_max_age > 0
+        raise ConfigurationError, "Default max age must be a positive number, got: #{default_max_age}"
+      end
+
+      if default_max_age < MIN_MAX_AGE
+        raise ConfigurationError,
+              "Default max age too low (#{default_max_age}s). Minimum: #{MIN_MAX_AGE}s"
+      end
+
+      if default_max_age > MAX_MAX_AGE
+        raise ConfigurationError,
+              "Default max age too high (#{default_max_age}s). Maximum: #{MAX_MAX_AGE}s to prevent stale tokens"
       end
     end
   end

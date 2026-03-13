@@ -449,6 +449,30 @@ RSpec.describe StirShaken::AuthenticationService do
     end
   end
 
+  describe 'forwarding attestation determination' do
+    let(:service) { create_auth_service(private_key: private_key, certificate: certificate) }
+
+    it 'reduces A to B for forwarded calls' do
+      result = service.send(:determine_forwarding_attestation, 'A')
+      expect(result).to eq('B')
+    end
+
+    it 'reduces B to C for forwarded calls' do
+      result = service.send(:determine_forwarding_attestation, 'B')
+      expect(result).to eq('C')
+    end
+
+    it 'keeps C for forwarded calls' do
+      result = service.send(:determine_forwarding_attestation, 'C')
+      expect(result).to eq('C')
+    end
+
+    it 'defaults to C for unknown attestation' do
+      result = service.send(:determine_forwarding_attestation, 'X')
+      expect(result).to eq('C')
+    end
+  end
+
   describe 'performance considerations' do
     let(:service) { create_auth_service(private_key: private_key, certificate: certificate) }
 

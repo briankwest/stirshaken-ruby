@@ -36,6 +36,7 @@ module StirShaken
         successful_verifications: 0,
         failed_verifications: 0
       }
+      @stats_mutex = Mutex.new
     end
 
     ##
@@ -47,11 +48,11 @@ module StirShaken
     # @param max_age [Integer] maximum age of token in seconds (default: 60)
     # @return [VerificationResult] verification result
     def verify_call(identity_header, originating_number: nil, destination_number: nil, max_age: StirShaken.configuration.default_max_age)
-      @verification_stats[:total_verifications] += 1
-      
+      record_total!
+
       # Handle nil or empty input
       if identity_header.nil? || identity_header.empty?
-        @verification_stats[:failed_verifications] += 1
+        record_failure!
         return VerificationResult.new(
           valid: false,
           reason: 'Invalid Identity header: header cannot be nil or empty',
@@ -68,7 +69,7 @@ module StirShaken
         certificate = CertificateManager.fetch_certificate(sip_identity.info_url)
         
         unless CertificateManager.validate_certificate(certificate)
-          @verification_stats[:failed_verifications] += 1
+          record_failure!
           return VerificationResult.new(
             valid: false,
             reason: 'Certificate validation failed',
@@ -84,7 +85,7 @@ module StirShaken
 
         # Check token age
         if passport.expired?(max_age: max_age)
-          @verification_stats[:failed_verifications] += 1
+          record_failure!
           return VerificationResult.new(
             valid: false,
             passport: passport,
@@ -97,7 +98,7 @@ module StirShaken
 
         # Validate originating number if provided
         if originating_number && passport.originating_number != normalize_phone_number(originating_number)
-          @verification_stats[:failed_verifications] += 1
+          record_failure!
           return VerificationResult.new(
             valid: false,
             passport: passport,
@@ -112,7 +113,7 @@ module StirShaken
         if destination_number
           normalized_dest = normalize_phone_number(destination_number)
           unless passport.destination_numbers.any? { |num| normalize_phone_number(num) == normalized_dest }
-            @verification_stats[:failed_verifications] += 1
+            record_failure!
             return VerificationResult.new(
               valid: false,
               passport: passport,
@@ -127,7 +128,7 @@ module StirShaken
         # Check if certificate authorizes the originating number
         if passport.originating_number && 
            !CertificateManager.validate_certificate(certificate, telephone_number: passport.originating_number)
-          @verification_stats[:failed_verifications] += 1
+          record_failure!
           return VerificationResult.new(
             valid: false,
             passport: passport,
@@ -139,7 +140,7 @@ module StirShaken
         end
 
         # Successful verification
-        @verification_stats[:successful_verifications] += 1
+        record_success!
         VerificationResult.new(
           valid: true,
           passport: passport,
@@ -150,42 +151,42 @@ module StirShaken
         )
 
       rescue InvalidIdentityHeaderError => e
-        @verification_stats[:failed_verifications] += 1
+        record_failure!
         VerificationResult.new(
           valid: false,
           reason: "Invalid Identity header: #{e.message}",
           confidence_level: 0
         )
       rescue CertificateFetchError => e
-        @verification_stats[:failed_verifications] += 1
+        record_failure!
         VerificationResult.new(
           valid: false,
           reason: "Certificate fetch failed: #{e.message}",
           confidence_level: 0
         )
       rescue CertificateValidationError => e
-        @verification_stats[:failed_verifications] += 1
+        record_failure!
         VerificationResult.new(
           valid: false,
           reason: "Certificate validation failed: #{e.message}",
           confidence_level: 0
         )
       rescue SignatureVerificationError, JWT::VerificationError => e
-        @verification_stats[:failed_verifications] += 1
+        record_failure!
         VerificationResult.new(
           valid: false,
           reason: "Signature verification failed: #{e.message}",
           confidence_level: 0
         )
       rescue PassportValidationError => e
-        @verification_stats[:failed_verifications] += 1
+        record_failure!
         VerificationResult.new(
           valid: false,
           reason: "PASSporT validation failed: #{e.message}",
           confidence_level: 0
         )
       rescue StandardError => e
-        @verification_stats[:failed_verifications] += 1
+        record_failure!
         VerificationResult.new(
           valid: false,
           reason: "Verification error: #{e.message}",
@@ -202,14 +203,14 @@ module StirShaken
     # @param max_age [Integer] maximum age of token in seconds (default: 60)
     # @return [VerificationResult] verification result
     def verify_passport(passport_token, certificate_url, max_age: StirShaken.configuration.default_max_age)
-      @verification_stats[:total_verifications] += 1
+      record_total!
 
       begin
         # Fetch certificate
         certificate = CertificateManager.fetch_certificate(certificate_url)
 
         unless CertificateManager.validate_certificate(certificate)
-          @verification_stats[:failed_verifications] += 1
+          record_failure!
           return VerificationResult.new(
             valid: false,
             reason: 'Certificate validation failed',
@@ -225,7 +226,7 @@ module StirShaken
 
         # Check token age
         if passport.expired?(max_age: max_age)
-          @verification_stats[:failed_verifications] += 1
+          record_failure!
           return VerificationResult.new(
             valid: false,
             passport: passport,
@@ -239,7 +240,7 @@ module StirShaken
         # Check certificate authorization
         if passport.originating_number &&
            !CertificateManager.validate_certificate(certificate, telephone_number: passport.originating_number)
-          @verification_stats[:failed_verifications] += 1
+          record_failure!
           return VerificationResult.new(
             valid: false,
             passport: passport,
@@ -251,7 +252,7 @@ module StirShaken
         end
 
         # Successful verification
-        @verification_stats[:successful_verifications] += 1
+        record_success!
         VerificationResult.new(
           valid: true,
           passport: passport,
@@ -262,42 +263,42 @@ module StirShaken
         )
 
       rescue CertificateFetchError => e
-        @verification_stats[:failed_verifications] += 1
+        record_failure!
         VerificationResult.new(
           valid: false,
           reason: "Certificate fetch failed: #{e.message}",
           confidence_level: 0
         )
       rescue CertificateValidationError => e
-        @verification_stats[:failed_verifications] += 1
+        record_failure!
         VerificationResult.new(
           valid: false,
           reason: "Certificate validation failed: #{e.message}",
           confidence_level: 0
         )
       rescue InvalidTokenError => e
-        @verification_stats[:failed_verifications] += 1
+        record_failure!
         VerificationResult.new(
           valid: false,
           reason: "Invalid token format: #{e.message}",
           confidence_level: 0
         )
       rescue SignatureVerificationError, JWT::VerificationError => e
-        @verification_stats[:failed_verifications] += 1
+        record_failure!
         VerificationResult.new(
           valid: false,
           reason: "Signature verification failed: #{e.message}",
           confidence_level: 0
         )
       rescue PassportValidationError => e
-        @verification_stats[:failed_verifications] += 1
+        record_failure!
         VerificationResult.new(
           valid: false,
           reason: "PASSporT validation failed: #{e.message}",
           confidence_level: 0
         )
       rescue StandardError => e
-        @verification_stats[:failed_verifications] += 1
+        record_failure!
         VerificationResult.new(
           valid: false,
           reason: "Verification error: #{e.message}",
@@ -311,20 +312,22 @@ module StirShaken
     #
     # @return [Hash] verification statistics
     def stats
-      success_rate = if @verification_stats[:total_verifications] > 0
-                       (@verification_stats[:successful_verifications].to_f / @verification_stats[:total_verifications]) * 100
-                     else
-                       0.0
-                     end
+      @stats_mutex.synchronize do
+        success_rate = if @verification_stats[:total_verifications] > 0
+                         (@verification_stats[:successful_verifications].to_f / @verification_stats[:total_verifications]) * 100
+                       else
+                         0.0
+                       end
 
-      @verification_stats.merge(
-        success_rate: success_rate,
-        certificate_cache_stats: CertificateManager.cache_stats,
-        configuration: {
-          certificate_cache_ttl: StirShaken.configuration.certificate_cache_ttl,
-          http_timeout: StirShaken.configuration.http_timeout
-        }
-      )
+        @verification_stats.merge(
+          success_rate: success_rate,
+          certificate_cache_stats: CertificateManager.cache_stats,
+          configuration: {
+            certificate_cache_ttl: StirShaken.configuration.certificate_cache_ttl,
+            http_timeout: StirShaken.configuration.http_timeout
+          }
+        )
+      end
     end
 
     ##
@@ -371,6 +374,18 @@ module StirShaken
 
     private
 
+    def record_total!
+      @stats_mutex.synchronize { @verification_stats[:total_verifications] += 1 }
+    end
+
+    def record_success!
+      @stats_mutex.synchronize { @verification_stats[:successful_verifications] += 1 }
+    end
+
+    def record_failure!
+      @stats_mutex.synchronize { @verification_stats[:failed_verifications] += 1 }
+    end
+
     ##
     # Normalize phone number for comparison
     #
@@ -379,10 +394,10 @@ module StirShaken
     def normalize_phone_number(number)
       # Remove all non-digit characters except leading +
       normalized = number.gsub(/[^\d+]/, '')
-      
+
       # Ensure it starts with +
       normalized = "+#{normalized}" unless normalized.start_with?('+')
-      
+
       normalized
     end
   end

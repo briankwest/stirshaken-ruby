@@ -266,9 +266,18 @@ RSpec.describe StirShaken::SecurityLogger do
       expect(output).to include('+1234') # Should not be masked
     end
 
+    it 'handles phone number with exactly 7 characters' do
+      # Exactly at boundary (length > 6 triggers masking)
+      described_class.log_authentication_success('+123456', ['+15559876543'], 'A')
+      # 7 chars: no masking (length must be > 6, so 7 chars is masked but with 1 middle char)
+      # prefix = "+1", last4 = "3456", masked_middle = "*" * max(7-6, 0) = "*"
+      output = $stderr.string
+      expect(output).to include('+1*3456')
+    end
+
     it 'handles non-string phone numbers' do
       described_class.log_authentication_success(nil, ['+15559876543'], 'A')
-      
+
       output = $stderr.string
       expect(output).to include('null') # JSON representation of nil
     end
@@ -286,9 +295,66 @@ RSpec.describe StirShaken::SecurityLogger do
 
     it 'handles non-string URLs' do
       described_class.log_certificate_fetch(nil, true)
-      
+
       output = $stderr.string
       expect(output).to include('null')
+    end
+
+    it 'masks URL with non-standard port' do
+      masked = described_class.mask_url('https://example.com:8443/path/to/cert.pem')
+      expect(masked).to eq('https://example.com:8443/***')
+    end
+
+    it 'masks URL with standard HTTPS port (omits port)' do
+      masked = described_class.mask_url('https://example.com:443/path/to/cert.pem')
+      expect(masked).to eq('https://example.com/***')
+    end
+
+    it 'masks URL with standard HTTP port (omits port)' do
+      masked = described_class.mask_url('http://example.com:80/path/to/cert.pem')
+      expect(masked).to eq('http://example.com/***')
+    end
+
+    it 'returns *** for invalid URLs' do
+      expect(described_class.mask_url('not a url %%%')).to eq('***')
+    end
+
+    it 'returns non-string input as-is' do
+      expect(described_class.mask_url(nil)).to be_nil
+      expect(described_class.mask_url(123)).to eq(123)
+    end
+  end
+
+  describe 'Rails logger integration' do
+    it 'uses Rails logger when available' do
+      # Create a mock Rails module with a logger
+      rails_logger = double('Rails.logger')
+      rails_module = double('Rails', logger: rails_logger)
+
+      stub_const('Rails', rails_module)
+
+      expect(rails_logger).to receive(:info).with(/STIRSHAKEN-SECURITY/)
+      described_class.log_security_event(:authentication_success, { test: true })
+    end
+
+    it 'uses error level for critical events via Rails logger' do
+      rails_logger = double('Rails.logger')
+      rails_module = double('Rails', logger: rails_logger)
+
+      stub_const('Rails', rails_module)
+
+      expect(rails_logger).to receive(:error).with(/STIRSHAKEN-SECURITY/)
+      described_class.log_security_event(:rate_limit_exceeded, { test: true })
+    end
+
+    it 'uses warn level for medium events via Rails logger' do
+      rails_logger = double('Rails.logger')
+      rails_module = double('Rails', logger: rails_logger)
+
+      stub_const('Rails', rails_module)
+
+      expect(rails_logger).to receive(:warn).with(/STIRSHAKEN-SECURITY/)
+      described_class.log_security_event(:authentication_failure, { test: true })
     end
   end
 

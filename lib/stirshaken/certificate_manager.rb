@@ -296,7 +296,7 @@ module StirShaken
         # Calculate SHA256 pin of the certificate's public key
         actual_pin = Digest::SHA256.hexdigest(certificate.public_key.to_der)
         
-        unless expected_pins.any? { |pin| OpenSSL.fixed_length_secure_compare(actual_pin, pin) }
+        unless expected_pins.any? { |pin| pin.length == actual_pin.length && OpenSSL.fixed_length_secure_compare(actual_pin, pin) }
           raise CertificateValidationError,
                 "Certificate pin validation failed. Expected: #{expected_pins.join(', ')}, Got: #{actual_pin}"
         end
@@ -312,6 +312,9 @@ module StirShaken
       #
       # @param uri [URI] parsed URI
       # @raise [CertificateFetchError] if URL targets a private/internal address
+      # NOTE: DNS rebinding TOCTOU — we resolve DNS here but HTTParty re-resolves
+      # at fetch time. A full fix would require passing resolved IPs to HTTParty.
+      # This check still blocks the vast majority of SSRF attempts.
       def validate_url_safety!(uri)
         host = uri.host&.downcase
         return unless host

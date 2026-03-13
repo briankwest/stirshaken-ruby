@@ -195,6 +195,23 @@ RSpec.describe StirShaken::SignatureUtils do
     end
   end
 
+  describe 'DER length encoding' do
+    it 'handles long form lengths (>= 128 bytes)' do
+      # Call the private der_length_encode method directly
+      short_result = described_class.send(:der_length_encode, 64)
+      expect(short_result.bytes[0]).to eq(64) # Short form
+
+      long_result = described_class.send(:der_length_encode, 128)
+      expect(long_result.bytes[0] & 0x80).to eq(0x80) # Long form indicator
+      expect(long_result.bytes[1]).to eq(128)
+
+      very_long_result = described_class.send(:der_length_encode, 256)
+      expect(very_long_result.bytes[0] & 0x80).to eq(0x80) # Long form indicator
+      # 256 = 0x0100, needs 2 bytes
+      expect(very_long_result.bytes[0] & 0x7F).to eq(2) # 2 length bytes
+    end
+  end
+
   describe 'format validation' do
     it 'validates DER SEQUENCE structure' do
       der_signature = described_class.jwt_to_der_signature(test_signature_binary)
