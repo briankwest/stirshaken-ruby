@@ -56,22 +56,20 @@ begin
   div_result = auth_service.sign_diverted_call(
     shaken_identity_header: original_identity,
     new_destination: forwarded_destination,
-    original_destination: original_destination,
-    diversion_reason: 'forwarding'
+    original_destination: original_destination
   )
-  
+
   puts "✅ DIV Identity Header: #{div_result[:div_header][0..80]}..."
-  
+
   # Step 3: Verify the DIV PASSporT
   div_sip_identity = StirShaken::SipIdentity.parse(div_result[:div_header])
   div_passport = StirShaken::DivPassport.parse(div_sip_identity.passport_token, verify_signature: false)
-  
+
   puts "📋 DIV PASSporT Details:"
   puts "   - Original Destination: #{div_passport.original_destination}"
   puts "   - New Destination: #{div_passport.destination_numbers.join(', ')}"
-  puts "   - Diversion Reason: #{div_passport.diversion_reason}"
-  puts "   - Attestation: #{div_passport.attestation}"
   puts "   - Originating Number: #{div_passport.originating_number}"
+  puts "   - Issued At: #{div_passport.issued_at}"
 
 rescue => e
   puts "❌ Error in basic forwarding: #{e.message}"
@@ -90,21 +88,19 @@ begin
       origination_id: 'example-call-001'
     },
     forwarding_info: {
-      new_destination: forwarded_destination,
-      reason: 'forwarding'
+      new_destination: forwarded_destination
     }
   )
-  
+
   puts "✅ Complete forwarding scenario created:"
   puts "   - Original SHAKEN header: #{forwarding_result[:original_shaken_header][0..50]}..."
   puts "   - Forwarded SHAKEN header: #{forwarding_result[:forwarded_shaken_header][0..50]}..."
   puts "   - DIV header: #{forwarding_result[:div_header][0..50]}..."
-  
+
   metadata = forwarding_result[:metadata]
   puts "📋 Forwarding Metadata:"
   puts "   - Original Attestation: #{metadata[:original_attestation]}"
   puts "   - Forwarded Attestation: #{metadata[:forwarded_attestation]}"
-  puts "   - Diversion Reason: #{metadata[:diversion_reason]}"
   puts "   - Origination ID: #{metadata[:origination_id]}"
 
 rescue => e
@@ -125,32 +121,30 @@ begin
   first_hop = auth_service.sign_diverted_call(
     shaken_identity_header: original_identity,
     new_destination: first_forward,
-    original_destination: original_destination,
-    diversion_reason: 'forwarding'
+    original_destination: original_destination
   )
-  
-  # Second forwarding hop (follow-me scenario)
+
+  # Second forwarding hop
   second_hop = auth_service.sign_diverted_call(
     shaken_identity_header: first_hop[:shaken_header],
     new_destination: final_destination,
-    original_destination: first_forward, # Previous destination becomes original
-    diversion_reason: 'follow-me'
+    original_destination: first_forward
   )
-  
+
   puts "✅ Multiple hop forwarding:"
   puts "   - Original → First Forward: #{first_hop[:div_header][0..50]}..."
   puts "   - First Forward → Final: #{second_hop[:div_header][0..50]}..."
-  
+
   # Parse both DIV headers
   first_div_sip = StirShaken::SipIdentity.parse(first_hop[:div_header])
   first_div_passport = StirShaken::DivPassport.parse(first_div_sip.passport_token, verify_signature: false)
-  
+
   second_div_sip = StirShaken::SipIdentity.parse(second_hop[:div_header])
   second_div_passport = StirShaken::DivPassport.parse(second_div_sip.passport_token, verify_signature: false)
-  
+
   puts "📋 Forwarding Chain:"
-  puts "   - Hop 1: #{first_div_passport.original_destination} → #{first_div_passport.destination_numbers.first} (#{first_div_passport.diversion_reason})"
-  puts "   - Hop 2: #{second_div_passport.original_destination} → #{second_div_passport.destination_numbers.first} (#{second_div_passport.diversion_reason})"
+  puts "   - Hop 1: #{first_div_passport.original_destination} → #{first_div_passport.destination_numbers.first}"
+  puts "   - Hop 2: #{second_div_passport.original_destination} → #{second_div_passport.destination_numbers.first}"
 
 rescue => e
   puts "❌ Error in multiple hops: #{e.message}"
@@ -173,23 +167,21 @@ begin
     },
     forwarding_info: {
       new_destination: extension,
-      reason: 'deflection', # Call deflected to specific extension
-      attestation: 'B' # Maintain same attestation level
+      attestation: 'B' # Maintain same attestation level on the forwarded SHAKEN leg
     }
   )
-  
+
   puts "✅ Enterprise PBX forwarding:"
   puts "   - Main number: #{main_number}"
   puts "   - Extension: #{extension}"
-  puts "   - Reason: deflection"
-  
+
   # Parse the DIV header
   enterprise_div_sip = StirShaken::SipIdentity.parse(enterprise_forwarding[:div_header])
   enterprise_div_passport = StirShaken::DivPassport.parse(enterprise_div_sip.passport_token, verify_signature: false)
-  
+
   puts "📋 Enterprise Details:"
-  puts "   - Attestation maintained: #{enterprise_div_passport.attestation}"
-  puts "   - Diversion reason: #{enterprise_div_passport.diversion_reason}"
+  puts "   - Original destination: #{enterprise_div_passport.original_destination}"
+  puts "   - Forwarded destination: #{enterprise_div_passport.destination_numbers.join(', ')}"
 
 rescue => e
   puts "❌ Error in enterprise scenario: #{e.message}"
@@ -205,8 +197,7 @@ begin
   hunt_group_div = auth_service.create_div_passport_from_header(
     shaken_identity_header: original_identity,
     new_destination: hunt_group,
-    original_destination: original_destination,
-    diversion_reason: 'deflection'
+    original_destination: original_destination
   )
   
   # Create SIP Identity header for hunt group
@@ -243,8 +234,7 @@ begin
     when :forward
       {
         action: :create_div_passport,
-        new_destination: routing_rules[:destination],
-        reason: routing_rules[:reason] || 'forwarding'
+        new_destination: routing_rules[:destination]
       }
     when :pass_through
       {
@@ -258,29 +248,26 @@ begin
       }
     end
   end
-  
+
   # Example routing rules (would come from SignalWire configuration)
   routing_rules = {
     type: :forward,
-    destination: '+15559876543',
-    reason: 'time-of-day'
+    destination: '+15559876543'
   }
-  
+
   decision = signalwire_routing_decision(original_identity, routing_rules)
-  
+
   if decision[:action] == :create_div_passport
     signalwire_result = auth_service.sign_diverted_call(
       shaken_identity_header: original_identity,
       new_destination: decision[:new_destination],
-      original_destination: original_destination,
-      diversion_reason: decision[:reason]
+      original_destination: original_destination
     )
-    
+
     puts "✅ SignalWire routing decision: CREATE_DIV_PASSPORT"
     puts "   - Action: Forward call with DIV PASSporT"
-    puts "   - Reason: #{decision[:reason]}"
     puts "   - New destination: #{decision[:new_destination]}"
-    
+
     # This is what you'd send to the B-leg
     puts "📤 B-leg headers to send:"
     puts "   - Original Identity: #{signalwire_result[:shaken_header][0..50]}..."
@@ -296,46 +283,27 @@ puts "-" * 40
 
 begin
   puts "🔍 Testing various validation scenarios:"
-  
-  # Test invalid diversion reason
-  begin
-    auth_service.create_div_passport_from_header(
-      shaken_identity_header: original_identity,
-      new_destination: '+15559876543',
-      original_destination: original_destination,
-      diversion_reason: 'invalid-reason'
-    )
-  rescue StirShaken::InvalidDiversionReasonError => e
-    puts "✅ Caught invalid diversion reason: #{e.message}"
-  end
-  
+
   # Test invalid phone number
   begin
     auth_service.create_div_passport_from_header(
       shaken_identity_header: original_identity,
       new_destination: 'invalid-number',
-      original_destination: original_destination,
-      diversion_reason: 'forwarding'
+      original_destination: original_destination
     )
   rescue StirShaken::InvalidPhoneNumberError => e
     puts "✅ Caught invalid phone number: #{e.message}"
   end
-  
+
   # Test invalid Identity header
   begin
     auth_service.create_div_passport_from_header(
       shaken_identity_header: 'invalid-header',
       new_destination: '+15559876543',
-      original_destination: original_destination,
-      diversion_reason: 'forwarding'
+      original_destination: original_destination
     )
   rescue => e
     puts "✅ Caught invalid Identity header: #{e.class.name}"
-  end
-  
-  puts "📋 Valid diversion reasons:"
-  StirShaken::DivPassport::VALID_DIVERSION_REASONS.each do |reason|
-    puts "   - #{reason}"
   end
 
 rescue => e
@@ -356,23 +324,21 @@ begin
       auth_service.create_div_passport_from_header(
         shaken_identity_header: original_identity,
         new_destination: '+15559876543',
-        original_destination: original_destination,
-        diversion_reason: 'forwarding'
+        original_destination: original_destination
       )
     end
   end
-  
+
   puts "   - 100 DIV PASSporT creations: #{(div_time.real * 1000).round(2)}ms"
   puts "   - Average per creation: #{(div_time.real * 10).round(2)}ms"
-  
+
   # Best practices
   puts "\n💡 Best Practices:"
   puts "   1. Cache certificates to avoid repeated fetches"
   puts "   2. Validate phone numbers before creating PASSporTs"
-  puts "   3. Use appropriate diversion reasons for compliance"
-  puts "   4. Maintain origination_id across forwarding hops"
-  puts "   5. Reduce attestation levels appropriately"
-  puts "   6. Log all DIV PASSporT operations for audit trails"
+  puts "   3. Maintain origination_id across forwarded SHAKEN headers"
+  puts "   4. Reduce attestation levels appropriately on the forwarded SHAKEN leg"
+  puts "   5. Log all DIV PASSporT operations for audit trails"
 
 rescue => e
   puts "❌ Error in performance testing: #{e.message}"

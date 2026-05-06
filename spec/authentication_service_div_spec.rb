@@ -8,7 +8,7 @@ RSpec.describe StirShaken::AuthenticationService, 'DIV PASSporT functionality' d
   let(:public_key) { key_pair[:public_key] }
   let(:certificate_url) { 'https://test.example.com/cert.pem' }
   let(:certificate) { create_test_certificate(private_key) }
-  
+
   let(:service) do
     StirShaken::AuthenticationService.new(
       private_key: private_key,
@@ -20,9 +20,7 @@ RSpec.describe StirShaken::AuthenticationService, 'DIV PASSporT functionality' d
   let(:originating_number) { '+15551234567' }
   let(:original_destination) { '+15551111111' }
   let(:new_destination) { '+15559876543' }
-  let(:diversion_reason) { 'forwarding' }
 
-  # Create a sample original SHAKEN PASSporT
   let(:original_passport) do
     token = StirShaken::Passport.create(
       originating_number: originating_number,
@@ -43,7 +41,6 @@ RSpec.describe StirShaken::AuthenticationService, 'DIV PASSporT functionality' d
   end
 
   before do
-    # Capture log output
     @original_stderr = $stderr
     $stderr = StringIO.new
   end
@@ -57,32 +54,27 @@ RSpec.describe StirShaken::AuthenticationService, 'DIV PASSporT functionality' d
       div_token = service.create_div_passport(
         original_passport: original_passport,
         new_destination: new_destination,
-        original_destination: original_destination,
-        diversion_reason: diversion_reason
+        original_destination: original_destination
       )
 
       expect(div_token).to be_a(String)
-      expect(div_token.count('.')).to eq(2) # JWT format
+      expect(div_token.count('.')).to eq(2)
 
-      # Parse and verify the token
       div_passport = StirShaken::DivPassport.parse(div_token, verify_signature: false)
       expect(div_passport.div_passport?).to be true
       expect(div_passport.original_destination).to eq(original_destination)
-      expect(div_passport.diversion_reason).to eq(diversion_reason)
     end
 
-    it 'preserves original passport information' do
+    it 'preserves original orig.tn and iat' do
       div_token = service.create_div_passport(
         original_passport: original_passport,
         new_destination: new_destination,
-        original_destination: original_destination,
-        diversion_reason: diversion_reason
+        original_destination: original_destination
       )
 
       div_passport = StirShaken::DivPassport.parse(div_token, verify_signature: false)
       expect(div_passport.originating_number).to eq(original_passport.originating_number)
-      expect(div_passport.attestation).to eq(original_passport.attestation)
-      expect(div_passport.origination_id).to eq(original_passport.origination_id)
+      expect(div_passport.issued_at).to eq(original_passport.issued_at)
     end
 
     it 'handles multiple new destinations' do
@@ -90,72 +82,39 @@ RSpec.describe StirShaken::AuthenticationService, 'DIV PASSporT functionality' d
       div_token = service.create_div_passport(
         original_passport: original_passport,
         new_destination: multiple_destinations,
-        original_destination: original_destination,
-        diversion_reason: diversion_reason
+        original_destination: original_destination
       )
 
       div_passport = StirShaken::DivPassport.parse(div_token, verify_signature: false)
       expect(div_passport.destination_numbers).to eq(multiple_destinations)
     end
 
-    it 'accepts custom origination_id' do
-      custom_id = 'div-call-123'
-      div_token = service.create_div_passport(
-        original_passport: original_passport,
-        new_destination: new_destination,
-        original_destination: original_destination,
-        diversion_reason: diversion_reason,
-        origination_id: custom_id
-      )
-
-      div_passport = StirShaken::DivPassport.parse(div_token, verify_signature: false)
-      expect(div_passport.origination_id).to eq(custom_id)
-    end
-
     it 'logs successful DIV PASSporT creation' do
       service.create_div_passport(
         original_passport: original_passport,
         new_destination: new_destination,
-        original_destination: original_destination,
-        diversion_reason: diversion_reason
+        original_destination: original_destination
       )
 
       output = $stderr.string
       expect(output).to include('DIV_PASSPORT_CREATED')
-      expect(output).to include('"diversion_reason":"forwarding"')
     end
 
     it 'logs and re-raises errors' do
-      # Create invalid passport to trigger error
       invalid_passport = double('passport')
       allow(invalid_passport).to receive(:originating_number).and_return(originating_number)
-      allow(invalid_passport).to receive(:attestation).and_return('A')
-      allow(invalid_passport).to receive(:origination_id).and_return('test-id')
+      allow(invalid_passport).to receive(:issued_at).and_return(Time.now.to_i)
 
       expect {
         service.create_div_passport(
           original_passport: invalid_passport,
-          new_destination: 'invalid-number', # This will trigger validation error
-          original_destination: original_destination,
-          diversion_reason: diversion_reason
+          new_destination: 'invalid-number',
+          original_destination: original_destination
         )
       }.to raise_error(StirShaken::InvalidPhoneNumberError)
 
       output = $stderr.string
       expect(output).to include('DIV_PASSPORT_CREATION_FAILURE')
-    end
-
-    it 'works with all valid diversion reasons' do
-      StirShaken::DivPassport::VALID_DIVERSION_REASONS.each do |reason|
-        expect {
-          service.create_div_passport(
-            original_passport: original_passport,
-            new_destination: new_destination,
-            original_destination: original_destination,
-            diversion_reason: reason
-          )
-        }.not_to raise_error
-      end
     end
   end
 
@@ -164,8 +123,7 @@ RSpec.describe StirShaken::AuthenticationService, 'DIV PASSporT functionality' d
       div_token = service.create_div_passport_from_header(
         shaken_identity_header: shaken_identity_header,
         new_destination: new_destination,
-        original_destination: original_destination,
-        diversion_reason: diversion_reason
+        original_destination: original_destination
       )
 
       expect(div_token).to be_a(String)
@@ -173,17 +131,15 @@ RSpec.describe StirShaken::AuthenticationService, 'DIV PASSporT functionality' d
       expect(div_passport.div_passport?).to be true
     end
 
-    it 'preserves original call information from header' do
+    it 'preserves original orig.tn from header' do
       div_token = service.create_div_passport_from_header(
         shaken_identity_header: shaken_identity_header,
         new_destination: new_destination,
-        original_destination: original_destination,
-        diversion_reason: diversion_reason
+        original_destination: original_destination
       )
 
       div_passport = StirShaken::DivPassport.parse(div_token, verify_signature: false)
       expect(div_passport.originating_number).to eq(originating_number)
-      expect(div_passport.attestation).to eq('A')
     end
 
     it 'can verify original passport when requested' do
@@ -192,7 +148,6 @@ RSpec.describe StirShaken::AuthenticationService, 'DIV PASSporT functionality' d
           shaken_identity_header: shaken_identity_header,
           new_destination: new_destination,
           original_destination: original_destination,
-          diversion_reason: diversion_reason,
           verify_original: true
         )
       }.not_to raise_error
@@ -202,8 +157,7 @@ RSpec.describe StirShaken::AuthenticationService, 'DIV PASSporT functionality' d
       service.create_div_passport_from_header(
         shaken_identity_header: shaken_identity_header,
         new_destination: new_destination,
-        original_destination: original_destination,
-        diversion_reason: diversion_reason
+        original_destination: original_destination
       )
 
       output = $stderr.string
@@ -215,10 +169,9 @@ RSpec.describe StirShaken::AuthenticationService, 'DIV PASSporT functionality' d
         service.create_div_passport_from_header(
           shaken_identity_header: 'invalid-header',
           new_destination: new_destination,
-          original_destination: original_destination,
-          diversion_reason: diversion_reason
+          original_destination: original_destination
         )
-      }.to raise_error
+      }.to raise_error(StandardError)
 
       output = $stderr.string
       expect(output).to include('DIV_PASSPORT_FROM_HEADER_FAILURE')
@@ -226,12 +179,11 @@ RSpec.describe StirShaken::AuthenticationService, 'DIV PASSporT functionality' d
   end
 
   describe '#sign_diverted_call' do
-    it 'creates both SHAKEN and DIV headers' do
+    it 'creates both original and DIV headers' do
       result = service.sign_diverted_call(
         shaken_identity_header: shaken_identity_header,
         new_destination: new_destination,
-        original_destination: original_destination,
-        diversion_reason: diversion_reason
+        original_destination: original_destination
       )
 
       expect(result).to be_a(Hash)
@@ -244,16 +196,13 @@ RSpec.describe StirShaken::AuthenticationService, 'DIV PASSporT functionality' d
       result = service.sign_diverted_call(
         shaken_identity_header: shaken_identity_header,
         new_destination: new_destination,
-        original_destination: original_destination,
-        diversion_reason: diversion_reason
+        original_destination: original_destination
       )
 
-      # Parse the DIV header
       div_sip_identity = StirShaken::SipIdentity.parse(result[:div_header])
       expect(div_sip_identity.extension).to eq('div')
       expect(div_sip_identity.algorithm).to eq('ES256')
 
-      # Parse the embedded DIV PASSporT
       div_passport = StirShaken::DivPassport.parse(div_sip_identity.passport_token, verify_signature: false)
       expect(div_passport.div_passport?).to be true
       expect(div_passport.original_destination).to eq(original_destination)
@@ -265,7 +214,6 @@ RSpec.describe StirShaken::AuthenticationService, 'DIV PASSporT functionality' d
         shaken_identity_header: shaken_identity_header,
         new_destination: new_destination,
         original_destination: original_destination,
-        diversion_reason: diversion_reason,
         additional_info: additional_info
       )
 
@@ -277,8 +225,7 @@ RSpec.describe StirShaken::AuthenticationService, 'DIV PASSporT functionality' d
       service.sign_diverted_call(
         shaken_identity_header: shaken_identity_header,
         new_destination: new_destination,
-        original_destination: original_destination,
-        diversion_reason: diversion_reason
+        original_destination: original_destination
       )
 
       output = $stderr.string
@@ -290,10 +237,9 @@ RSpec.describe StirShaken::AuthenticationService, 'DIV PASSporT functionality' d
         service.sign_diverted_call(
           shaken_identity_header: 'invalid-header',
           new_destination: new_destination,
-          original_destination: original_destination,
-          diversion_reason: diversion_reason
+          original_destination: original_destination
         )
-      }.to raise_error
+      }.to raise_error(StandardError)
 
       output = $stderr.string
       expect(output).to include('DIVERTED_CALL_SIGNING_FAILURE')
@@ -311,10 +257,7 @@ RSpec.describe StirShaken::AuthenticationService, 'DIV PASSporT functionality' d
     end
 
     let(:forwarding_info) do
-      {
-        new_destination: new_destination,
-        reason: 'forwarding'
-      }
+      { new_destination: new_destination }
     end
 
     it 'creates complete call forwarding scenario' do
@@ -336,22 +279,20 @@ RSpec.describe StirShaken::AuthenticationService, 'DIV PASSporT functionality' d
         forwarding_info: forwarding_info
       )
 
-      # Parse forwarded SHAKEN header to check attestation
       forwarded_sip_identity = StirShaken::SipIdentity.parse(result[:forwarded_shaken_header])
       forwarded_passport = forwarded_sip_identity.parse_passport(verify_signature: false)
-      
-      expect(forwarded_passport.attestation).to eq('B') # Reduced from A to B
+
+      expect(forwarded_passport.attestation).to eq('B')
       expect(result[:metadata][:original_attestation]).to eq('A')
       expect(result[:metadata][:forwarded_attestation]).to eq('B')
     end
 
-    it 'preserves origination_id across forwarding' do
+    it 'preserves origination_id across forwarded SHAKEN headers' do
       result = service.create_call_forwarding(
         original_call_info: original_call_info,
         forwarding_info: forwarding_info
       )
 
-      # Parse both headers to verify same origination_id
       original_sip_identity = StirShaken::SipIdentity.parse(result[:original_shaken_header])
       original_passport = original_sip_identity.parse_passport(verify_signature: false)
 
@@ -390,7 +331,7 @@ RSpec.describe StirShaken::AuthenticationService, 'DIV PASSporT functionality' d
 
       forwarded_sip_identity = StirShaken::SipIdentity.parse(result[:forwarded_shaken_header])
       forwarded_passport = forwarded_sip_identity.parse_passport(verify_signature: false)
-      
+
       expect(forwarded_passport.attestation).to eq('C')
       expect(result[:metadata][:forwarded_attestation]).to eq('C')
     end
@@ -407,8 +348,8 @@ RSpec.describe StirShaken::AuthenticationService, 'DIV PASSporT functionality' d
       expect(metadata[:new_destination]).to eq(new_destination)
       expect(metadata[:original_attestation]).to eq('A')
       expect(metadata[:forwarded_attestation]).to eq('B')
-      expect(metadata[:diversion_reason]).to eq('forwarding')
       expect(metadata[:origination_id]).to eq('test-call-123')
+      expect(metadata).not_to have_key(:diversion_reason)
     end
 
     it 'logs successful call forwarding creation' do
@@ -429,7 +370,7 @@ RSpec.describe StirShaken::AuthenticationService, 'DIV PASSporT functionality' d
           original_call_info: invalid_call_info,
           forwarding_info: forwarding_info
         )
-      }.to raise_error
+      }.to raise_error(StandardError)
 
       output = $stderr.string
       expect(output).to include('CALL_FORWARDING_FAILURE')
@@ -445,60 +386,49 @@ RSpec.describe StirShaken::AuthenticationService, 'DIV PASSporT functionality' d
         forwarding_info: multiple_forwarding
       )
 
-      # Parse DIV header to verify multiple destinations
       div_sip_identity = StirShaken::SipIdentity.parse(result[:div_header])
       div_passport = StirShaken::DivPassport.parse(div_sip_identity.passport_token, verify_signature: false)
-      
+
       expect(div_passport.destination_numbers).to eq(multiple_forwarding[:new_destination])
     end
   end
 
   describe '#determine_forwarding_attestation (private method)' do
     it 'reduces attestation A to B' do
-      result = service.send(:determine_forwarding_attestation, 'A')
-      expect(result).to eq('B')
+      expect(service.send(:determine_forwarding_attestation, 'A')).to eq('B')
     end
 
     it 'reduces attestation B to C' do
-      result = service.send(:determine_forwarding_attestation, 'B')
-      expect(result).to eq('C')
+      expect(service.send(:determine_forwarding_attestation, 'B')).to eq('C')
     end
 
     it 'keeps attestation C as C' do
-      result = service.send(:determine_forwarding_attestation, 'C')
-      expect(result).to eq('C')
+      expect(service.send(:determine_forwarding_attestation, 'C')).to eq('C')
     end
 
     it 'defaults unknown attestation to C' do
-      result = service.send(:determine_forwarding_attestation, 'X')
-      expect(result).to eq('C')
+      expect(service.send(:determine_forwarding_attestation, 'X')).to eq('C')
     end
   end
 
   describe 'integration scenarios' do
     it 'handles complete call forwarding workflow' do
-      # Step 1: Original call comes in
       original_header = service.sign_call(
         originating_number: originating_number,
         destination_number: original_destination,
         attestation: 'A'
       )
 
-      # Step 2: Call needs to be forwarded
       forwarding_result = service.sign_diverted_call(
         shaken_identity_header: original_header,
         new_destination: new_destination,
-        original_destination: original_destination,
-        diversion_reason: 'forwarding'
+        original_destination: original_destination
       )
 
-      # Step 3: Verify both headers are valid
-      # Original SHAKEN header
       original_sip_identity = StirShaken::SipIdentity.parse(forwarding_result[:shaken_header])
       original_passport = original_sip_identity.parse_passport(verify_signature: false)
       expect(original_passport.attestation).to eq('A')
 
-      # DIV header
       div_sip_identity = StirShaken::SipIdentity.parse(forwarding_result[:div_header])
       div_passport = StirShaken::DivPassport.parse(div_sip_identity.passport_token, verify_signature: false)
       expect(div_passport.div_passport?).to be true
@@ -507,34 +437,28 @@ RSpec.describe StirShaken::AuthenticationService, 'DIV PASSporT functionality' d
     end
 
     it 'handles multiple forwarding hops' do
-      # First forwarding
       first_forwarding = service.sign_diverted_call(
         shaken_identity_header: shaken_identity_header,
         new_destination: '+15552222222',
-        original_destination: original_destination,
-        diversion_reason: 'forwarding'
+        original_destination: original_destination
       )
 
-      # Second forwarding (forwarding the already forwarded call)
       second_forwarding = service.sign_diverted_call(
         shaken_identity_header: first_forwarding[:shaken_header],
         new_destination: '+15553333333',
-        original_destination: '+15552222222', # Previous destination becomes original
-        diversion_reason: 'follow-me'
+        original_destination: '+15552222222'
       )
 
-      # Verify both DIV headers are valid
       first_div_sip_identity = StirShaken::SipIdentity.parse(first_forwarding[:div_header])
       first_div_passport = StirShaken::DivPassport.parse(first_div_sip_identity.passport_token, verify_signature: false)
-      expect(first_div_passport.diversion_reason).to eq('forwarding')
+      expect(first_div_passport.original_destination).to eq(original_destination)
 
       second_div_sip_identity = StirShaken::SipIdentity.parse(second_forwarding[:div_header])
       second_div_passport = StirShaken::DivPassport.parse(second_div_sip_identity.passport_token, verify_signature: false)
-      expect(second_div_passport.diversion_reason).to eq('follow-me')
+      expect(second_div_passport.original_destination).to eq('+15552222222')
     end
 
-    it 'maintains chain of trust through forwarding' do
-      # Create complete forwarding scenario with explicit origination_id
+    it 'preserves origination_id on forwarded SHAKEN leg only' do
       origination_id = 'chain-test-123'
       result = service.create_call_forwarding(
         original_call_info: {
@@ -543,13 +467,9 @@ RSpec.describe StirShaken::AuthenticationService, 'DIV PASSporT functionality' d
           attestation: 'A',
           origination_id: origination_id
         },
-        forwarding_info: {
-          new_destination: new_destination,
-          reason: 'forwarding'
-        }
+        forwarding_info: { new_destination: new_destination }
       )
 
-      # Verify all components maintain consistent information
       original_sip_identity = StirShaken::SipIdentity.parse(result[:original_shaken_header])
       original_passport = original_sip_identity.parse_passport(verify_signature: false)
 
@@ -559,24 +479,21 @@ RSpec.describe StirShaken::AuthenticationService, 'DIV PASSporT functionality' d
       div_sip_identity = StirShaken::SipIdentity.parse(result[:div_header])
       div_passport = StirShaken::DivPassport.parse(div_sip_identity.passport_token, verify_signature: false)
 
-      # All should have same originating number and origination_id
       expect(original_passport.originating_number).to eq(originating_number)
       expect(forwarded_passport.originating_number).to eq(originating_number)
       expect(div_passport.originating_number).to eq(originating_number)
 
       expect(original_passport.origination_id).to eq(origination_id)
       expect(forwarded_passport.origination_id).to eq(origination_id)
-      expect(div_passport.origination_id).to eq(origination_id)
 
-      # Verify attestation reduction
+      # DIV PASSporT does not carry origid per RFC 8946
+      expect(div_passport.origination_id).to be_nil
+
       expect(original_passport.attestation).to eq('A')
-      expect(forwarded_passport.attestation).to eq('B') # Reduced due to forwarding
-      expect(div_passport.attestation).to eq('A') # Preserves original attestation
+      expect(forwarded_passport.attestation).to eq('B')
 
-      # Verify DIV-specific information
       expect(div_passport.original_destination).to eq(original_destination)
       expect(div_passport.destination_numbers).to eq([new_destination])
-      expect(div_passport.diversion_reason).to eq('forwarding')
     end
   end
-end 
+end

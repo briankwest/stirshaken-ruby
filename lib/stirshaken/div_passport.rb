@@ -2,54 +2,31 @@
 
 module StirShaken
   ##
-  # DIV PASSporT (Diversion Personal Assertion Token) implementation
+  # DIV PASSporT (Diverted PASSporT) implementation per RFC 8946.
   #
-  # This class implements RFC 8946 for creating and validating DIV PASSporT tokens
-  # used in STIR/SHAKEN call diversion/forwarding scenarios.
+  # A DIV PASSporT carries: orig, dest, iat, and the div claim (original
+  # destination only). It does NOT carry SHAKEN-specific claims such as
+  # attest or origid -- those belong to RFC 8588.
   class DivPassport < Passport
     # Required extension for DIV PASSporT
     EXTENSION = 'div'
-    
-    # Valid diversion reasons per RFC 8946
-    VALID_DIVERSION_REASONS = %w[
-      forwarding
-      deflection
-      follow-me
-      time-of-day
-      user-busy
-      no-answer
-      unavailable
-      unconditional
-      away
-      unknown
-    ].freeze
 
     ##
     # Create a new DIV PASSporT token for call diversion
     #
-    # @param original_passport [Passport] the original SHAKEN PASSporT
+    # @param original_passport [Passport] the original PASSporT being diverted
     # @param new_destination [String, Array<String>] where call is being diverted to
     # @param original_destination [String] where call was originally going
-    # @param diversion_reason [String] reason for diversion (default: 'forwarding')
-    # @param origination_id [String] unique origination identifier (optional)
     # @param certificate_url [String] URL to the signing certificate
     # @param private_key [OpenSSL::PKey::EC] private key for signing
     # @return [String] encoded DIV PASSporT JWT token
     def self.create_div(original_passport:, new_destination:, original_destination:,
-                       diversion_reason: 'forwarding', origination_id: nil,
                        certificate_url:, private_key:)
-      
-      # Validate inputs
-      validate_diversion_reason!(diversion_reason)
       validate_phone_number!(original_destination)
-      
+
       new_destinations = Array(new_destination)
       new_destinations.each { |num| validate_phone_number!(num) }
 
-      # Use original passport's origination_id if not provided
-      origination_id ||= original_passport.origination_id
-
-      # Create header with DIV extension
       header = {
         'alg' => ALGORITHM,
         'typ' => TOKEN_TYPE,
@@ -57,20 +34,14 @@ module StirShaken
         'x5u' => certificate_url
       }
 
-      # Create payload with DIV-specific claims
+      # RFC 8946 §3: iat SHOULD match the original PASSporT's iat.
       payload = {
-        'attest' => original_passport.attestation,
         'dest' => { 'tn' => new_destinations },
-        'div' => {
-          'tn' => original_destination,
-          'reason' => diversion_reason
-        },
-        'iat' => Time.now.to_i,
-        'orig' => { 'tn' => original_passport.originating_number },
-        'origid' => origination_id
+        'div'  => { 'tn' => original_destination },
+        'iat'  => original_passport.issued_at,
+        'orig' => { 'tn' => original_passport.originating_number }
       }
 
-      # Sign the token
       JWT.encode(payload, private_key, ALGORITHM, header)
     end
 
@@ -80,30 +51,24 @@ module StirShaken
     # @param shaken_identity_header [String] the original SHAKEN Identity header
     # @param new_destination [String, Array<String>] where call is being diverted to
     # @param original_destination [String] where call was originally going
-    # @param diversion_reason [String] reason for diversion
     # @param certificate_url [String] URL to the signing certificate
     # @param private_key [OpenSSL::PKey::EC] private key for signing
     # @param public_key [OpenSSL::PKey::EC] public key for verifying original (optional)
     # @return [String] encoded DIV PASSporT JWT token
-    def self.create_from_identity_header(shaken_identity_header:, new_destination:, 
-                                       original_destination:, diversion_reason: 'forwarding',
-                                       certificate_url:, private_key:, public_key: nil)
-      
-      # Parse the original SHAKEN Identity header
+    def self.create_from_identity_header(shaken_identity_header:, new_destination:,
+                                       original_destination:, certificate_url:,
+                                       private_key:, public_key: nil)
       sip_identity = SipIdentity.parse(shaken_identity_header)
-      
-      # Extract and optionally verify the original PASSporT
+
       original_passport = sip_identity.parse_passport(
-        public_key: public_key, 
+        public_key: public_key,
         verify_signature: !public_key.nil?
       )
 
-      # Create DIV PASSporT
       create_div(
         original_passport: original_passport,
         new_destination: new_destination,
         original_destination: original_destination,
-        diversion_reason: diversion_reason,
         certificate_url: certificate_url,
         private_key: private_key
       )
@@ -117,57 +82,45 @@ module StirShaken
     # @param verify_signature [Boolean] whether to verify the signature
     # @return [DivPassport] parsed DIV PASSporT object
     def self.parse(token, public_key: nil, verify_signature: true)
-      begin
-        if verify_signature && public_key
-          decoded = JWT.decode(token, public_key, true, { algorithm: ALGORITHM })
-          payload = decoded[0]
-          header = decoded[1]
-        else
-          # Decode without verification for inspection
-          payload, header = JWT.decode(token, nil, false)
-        end
-
-        div_passport = new(header: header, payload: payload)
-        div_passport.validate!
-        div_passport
-      rescue JWT::DecodeError => e
-        raise InvalidTokenError, "Failed to decode DIV PASSporT: #{e.message}"
+      if verify_signature && public_key
+        decoded = JWT.decode(token, public_key, true, { algorithm: ALGORITHM })
+        payload = decoded[0]
+        header = decoded[1]
+      else
+        payload, header = JWT.decode(token, nil, false)
       end
+
+      div_passport = new(header: header, payload: payload)
+      div_passport.validate!
+      div_passport
+    rescue JWT::DecodeError => e
+      raise InvalidTokenError, "Failed to decode DIV PASSporT: #{e.message}"
     end
 
     ##
-    # Verify DIV PASSporT chains back to original SHAKEN PASSporT (RFC 8946)
+    # Verify DIV PASSporT chains back to its original PASSporT (RFC 8946)
     #
     # @param div_token [String] the DIV PASSporT JWT token
-    # @param shaken_token [String] the original SHAKEN PASSporT JWT token
+    # @param shaken_token [String] the original PASSporT JWT token
     # @param div_public_key [OpenSSL::PKey::EC] public key for DIV token verification
-    # @param shaken_public_key [OpenSSL::PKey::EC] public key for SHAKEN token verification (optional)
+    # @param shaken_public_key [OpenSSL::PKey::EC] public key for original token verification (optional)
     # @return [Hash] verification result with :valid and :reason
     def self.verify_chain(div_token:, shaken_token:, div_public_key:, shaken_public_key: nil)
-      # Parse and verify DIV PASSporT
       div_passport = parse(div_token, public_key: div_public_key, verify_signature: true)
 
-      # Parse original SHAKEN PASSporT
       shaken_passport = if shaken_public_key
                           Passport.parse(shaken_token, public_key: shaken_public_key, verify_signature: true)
                         else
                           Passport.parse(shaken_token, verify_signature: false)
                         end
 
-      # Verify chain: originating number must match
       unless div_passport.originating_number == shaken_passport.originating_number
-        return { valid: false, reason: 'Originating number mismatch between DIV and SHAKEN PASSporTs' }
+        return { valid: false, reason: 'Originating number mismatch between DIV and original PASSporTs' }
       end
 
-      # Verify chain: origid must match
-      unless div_passport.origination_id == shaken_passport.origination_id
-        return { valid: false, reason: 'Origination ID mismatch between DIV and SHAKEN PASSporTs' }
-      end
-
-      # Verify chain: DIV original destination should match SHAKEN destination
       shaken_dests = shaken_passport.destination_numbers
       unless shaken_dests.include?(div_passport.original_destination)
-        return { valid: false, reason: 'DIV original destination not found in SHAKEN destinations' }
+        return { valid: false, reason: 'DIV original destination not found in original PASSporT destinations' }
       end
 
       { valid: true, div_passport: div_passport, shaken_passport: shaken_passport }
@@ -179,14 +132,6 @@ module StirShaken
     # @return [String] the original destination number
     def original_destination
       payload.dig('div', 'tn')
-    end
-
-    ##
-    # Get the diversion reason
-    #
-    # @return [String] the reason for diversion
-    def diversion_reason
-      payload.dig('div', 'reason')
     end
 
     ##
@@ -202,7 +147,8 @@ module StirShaken
     #
     # @raise [PassportValidationError] if validation fails
     def validate!
-      super # Call parent validation
+      validate_header!
+      validate_payload!
       validate_div_claims!
     end
 
@@ -211,36 +157,13 @@ module StirShaken
     #
     # @return [Hash] hash representation of the DIV PASSporT
     def to_h
-      super.merge({
+      super.except(:attestation, :origination_id).merge(
         original_destination: original_destination,
-        diversion_reason: diversion_reason,
         div_passport: true
-      })
+      )
     end
 
     private
-
-    ##
-    # Validate DIV-specific claims
-    def validate_div_claims!
-      unless payload['div']
-        raise PassportValidationError, 'Missing div claim in DIV PASSporT'
-      end
-
-      unless original_destination
-        raise PassportValidationError, 'Missing original destination (div.tn) in DIV PASSporT'
-      end
-
-      unless diversion_reason
-        raise PassportValidationError, 'Missing diversion reason (div.reason) in DIV PASSporT'
-      end
-
-      # Validate diversion reason
-      self.class.validate_diversion_reason!(diversion_reason)
-
-      # Validate original destination format
-      validate_phone_number!(original_destination)
-    end
 
     ##
     # Validate the JWT header for DIV PASSporT
@@ -259,21 +182,29 @@ module StirShaken
         raise PassportValidationError, "Invalid extension: #{header['ppt']}, expected #{EXTENSION}"
       end
 
-      unless header['x5u']
-        raise PassportValidationError, 'Missing certificate URL (x5u)'
-      end
+      raise PassportValidationError, 'Missing certificate URL (x5u)' unless header['x5u']
     end
 
     ##
-    # Validate diversion reason
-    #
-    # @param reason [String] diversion reason to validate
-    # @raise [InvalidDiversionReasonError] if invalid
-    def self.validate_diversion_reason!(reason)
-      unless VALID_DIVERSION_REASONS.include?(reason)
-        raise InvalidDiversionReasonError, 
-              "Invalid diversion reason: #{reason}. Valid reasons: #{VALID_DIVERSION_REASONS.join(', ')}"
-      end
+    # Validate the DIV PASSporT payload (RFC 8946 §3)
+    def validate_payload!
+      raise PassportValidationError, 'Missing payload' unless payload
+
+      raise PassportValidationError, 'Missing dest' unless payload['dest']
+      raise PassportValidationError, 'Missing iat' unless payload['iat']
+      raise PassportValidationError, 'Missing orig' unless payload['orig']
+
+      validate_phone_number!(originating_number) if originating_number
+      destination_numbers.each { |num| validate_phone_number!(num) }
+    end
+
+    ##
+    # Validate DIV-specific claims (RFC 8946 §3)
+    def validate_div_claims!
+      raise PassportValidationError, 'Missing div claim in DIV PASSporT' unless payload['div']
+      raise PassportValidationError, 'Missing original destination (div.tn) in DIV PASSporT' unless original_destination
+
+      validate_phone_number!(original_destination)
     end
   end
-end 
+end

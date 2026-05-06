@@ -46,10 +46,6 @@ module StirShaken
   class ConfigurationError < Error; end
 
   ##
-  # Error raised when diversion reason is invalid
-  class InvalidDiversionReasonError < Error; end
-
-  ##
   # Error raised when certificate has been revoked
   class CertificateRevocationError < CertificateError; end
 end

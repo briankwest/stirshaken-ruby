@@ -276,7 +276,6 @@ RSpec.describe StirShaken do
       expect(defined?(StirShaken::InvalidIdentityHeaderError)).to be_truthy
       expect(defined?(StirShaken::InvalidTokenError)).to be_truthy
       expect(defined?(StirShaken::ConfigurationError)).to be_truthy
-      expect(defined?(StirShaken::InvalidDiversionReasonError)).to be_truthy
     end
 
     it 'has proper error inheritance' do
@@ -285,7 +284,6 @@ RSpec.describe StirShaken do
       expect(StirShaken::CertificateFetchError.superclass).to eq(StirShaken::CertificateError)
       expect(StirShaken::CertificateValidationError.superclass).to eq(StirShaken::CertificateError)
       expect(StirShaken::SignatureVerificationError.superclass).to eq(StirShaken::Error)
-      expect(StirShaken::InvalidDiversionReasonError.superclass).to eq(StirShaken::Error)
       expect(StirShaken::Error.superclass).to eq(StandardError)
     end
   end

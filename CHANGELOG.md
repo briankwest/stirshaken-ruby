@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed (breaking)
+
+- **DIV PASSporT now strictly conforms to RFC 8946 §3.** The token payload carries
+  only `orig`, `dest`, `iat`, and `div: { tn: ... }`. The non-spec `attest`,
+  `origid`, and `div.reason` fields have been removed.
+- `DivPassport.create_div`, `DivPassport.create_from_identity_header`, and the
+  matching `AuthenticationService` helpers (`create_div_passport`,
+  `create_div_passport_from_header`, `sign_diverted_call`) no longer accept the
+  `diversion_reason:` (or `origination_id:`) keyword argument.
+- `AuthenticationService#create_call_forwarding` no longer reads
+  `forwarding_info[:reason]` and no longer surfaces `diversion_reason` in the
+  returned metadata or in `:diverted_call_signed` / `:call_forwarding_created`
+  security log events.
+- `DivPassport.verify_chain` no longer enforces an `origid` equality check
+  between the DIV and original PASSporTs (that field is not part of RFC 8946).
+  Chain validation now checks `orig.tn` equality and that the DIV `div.tn`
+  appears in the original PASSporT's `dest.tn`.
+- `DivPassport` now copies `iat` from the original PASSporT (RFC 8946 §3 SHOULD)
+  rather than stamping the current time.
+- Removed `StirShaken::DivPassport::VALID_DIVERSION_REASONS`,
+  `DivPassport.validate_diversion_reason!`, `DivPassport#diversion_reason`, and
+  the `StirShaken::InvalidDiversionReasonError` exception class.
+
 ## [0.1.0] - 2025-05-28
 
 ### Added

@@ -642,8 +642,7 @@ puts "    Original call: +15551234567 → +15551111111 (A attestation)"
 div_result = auth_service.sign_diverted_call(
   shaken_identity_header: original_call,
   new_destination: '+15559876543',
-  original_destination: '+15551111111',
-  diversion_reason: 'forwarding'
+  original_destination: '+15551111111'
 )
 
 # Create forwarded SHAKEN header with reduced attestation
@@ -673,7 +672,6 @@ div_passport = StirShaken::DivPassport.parse(
 puts "    DIV Details:"
 puts "      Original destination: #{div_passport.original_destination}"
 puts "      New destination: #{div_passport.destination_numbers.join(', ')}"
-puts "      Diversion reason: #{div_passport.diversion_reason}"
 puts "      Preserved originating number: #{div_passport.originating_number}"
 
 # Scenario 2: Enterprise PBX Call Deflection
@@ -701,7 +699,6 @@ pbx_deflection = auth_service.create_call_forwarding(
   },
   forwarding_info: {
     new_destination: '+15554001234',
-    reason: 'deflection',
     attestation: 'B'
   }
 )
@@ -735,8 +732,7 @@ hunt_destinations = ['+15555001111', '+15555002222', '+15555003333']
 hunt_group_div = auth_service.create_div_passport_from_header(
   shaken_identity_header: hunt_group_call,
   new_destination: hunt_destinations,
-  original_destination: '+15555000000',
-  diversion_reason: 'deflection'
+  original_destination: '+15555000000'
 )
 
 puts "    Hunt group destinations: #{hunt_destinations.join(', ')}"
@@ -777,8 +773,7 @@ puts "    After-hours call: +15551234567 → +15556000000 (Business)"
 after_hours_forward = auth_service.sign_diverted_call(
   shaken_identity_header: after_hours_call,
   new_destination: '+15556999999', # Answering service
-  original_destination: '+15556000000',
-  diversion_reason: 'time-of-day'
+  original_destination: '+15556000000'
 )
 
 # Create forwarded call with gateway attestation
@@ -815,8 +810,7 @@ puts "    Call to busy user: +15551234567 → +15557001234"
 voicemail_forward = auth_service.sign_diverted_call(
   shaken_identity_header: busy_user_call,
   new_destination: '+15557009999', # Voicemail system
-  original_destination: '+15557001234',
-  diversion_reason: 'user-busy'
+  original_destination: '+15557001234'
 )
 
 # Create forwarded call to voicemail
@@ -853,8 +847,7 @@ puts "    Original: +15551234567 → +15558001111 (A attestation)"
 first_hop_div = auth_service.sign_diverted_call(
   shaken_identity_header: multi_hop_original,
   new_destination: '+15558002222',
-  original_destination: '+15558001111',
-  diversion_reason: 'follow-me'
+  original_destination: '+15558001111'
 )
 
 first_hop_call = auth_service.sign_call(
@@ -870,8 +863,7 @@ puts "    First hop: +15551234567 → +15558002222 (B attestation)"
 second_hop_div = auth_service.sign_diverted_call(
   shaken_identity_header: first_hop_call,
   new_destination: '+15558003333',
-  original_destination: '+15558002222',
-  diversion_reason: 'follow-me'
+  original_destination: '+15558002222'
 )
 
 second_hop_call = auth_service.sign_call(
@@ -917,8 +909,7 @@ div_performance_calls.times do |i|
   div_result = auth_service.sign_diverted_call(
     shaken_identity_header: base_call,
     new_destination: "+155590#{i.to_s.rjust(5, '0')}",
-    original_destination: '+15559000000',
-    diversion_reason: 'forwarding'
+    original_destination: '+15559000000'
   )
   div_creation_times << (Time.now - creation_start)
   
@@ -943,24 +934,6 @@ puts "  " + "-" * 39
 
 puts "    Testing DIV PASSporT error scenarios:"
 
-# Test invalid diversion reasons
-invalid_reasons = ['invalid-reason', 'spam', 'telemarketing', '']
-invalid_reasons.each_with_index do |reason, index|
-  begin
-    auth_service.create_div_passport_from_header(
-      shaken_identity_header: base_call,
-      new_destination: '+15559876543',
-      original_destination: '+15559000000',
-      diversion_reason: reason
-    )
-    puts "      Test #{index + 1} (#{reason}): UNEXPECTED SUCCESS"
-  rescue StirShaken::InvalidDiversionReasonError => e
-    puts "      Test #{index + 1} (#{reason}): ✓ Correctly rejected"
-  rescue => e
-    puts "      Test #{index + 1} (#{reason}): ✓ Error handled: #{e.class.name}"
-  end
-end
-
 # Test invalid phone numbers in DIV context
 invalid_numbers = ['invalid', '+', '123', '+0123456789']
 invalid_numbers.each_with_index do |number, index|
@@ -968,8 +941,7 @@ invalid_numbers.each_with_index do |number, index|
     auth_service.create_div_passport_from_header(
       shaken_identity_header: base_call,
       new_destination: number,
-      original_destination: '+15559000000',
-      diversion_reason: 'forwarding'
+      original_destination: '+15559000000'
     )
     puts "      Phone test #{index + 1} (#{number}): UNEXPECTED SUCCESS"
   rescue StirShaken::InvalidPhoneNumberError => e
@@ -996,8 +968,7 @@ analytics_call = auth_service.sign_call(
 analytics_div_result = auth_service.sign_diverted_call(
   shaken_identity_header: analytics_call,
   new_destination: '+15559876543',
-  original_destination: '+15559100000',
-  diversion_reason: 'forwarding'
+  original_destination: '+15559100000'
 )
 
 # Parse DIV PASSporT for analytics
@@ -1014,7 +985,6 @@ div_analytics = {
   original_caller: analytics_div_passport.originating_number,
   original_destination: analytics_div_passport.original_destination,
   final_destination: analytics_div_passport.destination_numbers.first,
-  diversion_reason: analytics_div_passport.diversion_reason,
   original_attestation: 'A',
   forwarded_attestation: 'B',
   div_passport_present: true,
@@ -1036,7 +1006,6 @@ puts "    DIV PASSporT fraud detection analysis:"
 # Analyze forwarding patterns for fraud indicators
 fraud_analysis = {
   excessive_forwarding: analytics_div_passport.destination_numbers.length > 3,
-  suspicious_reason: !['forwarding', 'deflection', 'follow-me', 'user-busy', 'no-answer'].include?(analytics_div_passport.diversion_reason),
   attestation_degradation: true, # A→B is normal
   international_forward: analytics_div_passport.destination_numbers.any? { |num| !num.start_with?('+1') },
   rapid_forwarding: false # Would check timestamp differences in real implementation

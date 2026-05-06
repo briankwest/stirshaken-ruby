@@ -220,44 +220,40 @@ token = auth.create_passport(
 
 ---
 
-#### `#create_div_passport(original_passport:, new_destination:, original_destination:, diversion_reason:, origination_id:)`
+#### `#create_div_passport(original_passport:, new_destination:, original_destination:)`
 
-Create a DIV PASSporT token for call diversion/forwarding.
+Create a DIV PASSporT token for call diversion/forwarding (RFC 8946).
 
 ```ruby
 div_token = auth.create_div_passport(
   original_passport: passport,
   new_destination: '+15553334444',
-  original_destination: '+15559876543',
-  diversion_reason: 'forwarding'
+  original_destination: '+15559876543'
 )
 ```
 
 **Parameters:**
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `original_passport:` | `StirShaken::Passport` | (required) | The original SHAKEN PASSporT |
+| `original_passport:` | `StirShaken::Passport` | (required) | The original PASSporT being diverted |
 | `new_destination:` | `String, Array<String>` | (required) | Number(s) where call is diverted to |
 | `original_destination:` | `String` | (required) | Number where call was originally going |
-| `diversion_reason:` | `String` | `'forwarding'` | Reason for diversion (see `DivPassport::VALID_DIVERSION_REASONS`) |
-| `origination_id:` | `String` | `nil` | Uses original passport's origination_id if omitted |
 
 **Returns:** `String` -- encoded DIV PASSporT JWT token.
 
-**Raises:** `InvalidDiversionReasonError`, `InvalidPhoneNumberError`
+**Raises:** `InvalidPhoneNumberError`
 
 ---
 
-#### `#create_div_passport_from_header(shaken_identity_header:, new_destination:, original_destination:, diversion_reason:, verify_original:)`
+#### `#create_div_passport_from_header(shaken_identity_header:, new_destination:, original_destination:, verify_original:)`
 
-Create a DIV PASSporT directly from an existing SHAKEN Identity header string.
+Create a DIV PASSporT directly from an existing SIP Identity header string.
 
 ```ruby
 div_token = auth.create_div_passport_from_header(
   shaken_identity_header: identity_header,
   new_destination: '+15553334444',
   original_destination: '+15559876543',
-  diversion_reason: 'no-answer',
   verify_original: false
 )
 ```
@@ -265,38 +261,35 @@ div_token = auth.create_div_passport_from_header(
 **Parameters:**
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `shaken_identity_header:` | `String` | (required) | Original SHAKEN SIP Identity header |
+| `shaken_identity_header:` | `String` | (required) | Original SIP Identity header |
 | `new_destination:` | `String, Array<String>` | (required) | Number(s) where call is diverted to |
 | `original_destination:` | `String` | (required) | Number where call was originally going |
-| `diversion_reason:` | `String` | `'forwarding'` | Reason for diversion |
 | `verify_original:` | `Boolean` | `false` | Whether to verify the original PASSporT signature |
 
 **Returns:** `String` -- encoded DIV PASSporT JWT token.
 
 ---
 
-#### `#sign_diverted_call(shaken_identity_header:, new_destination:, original_destination:, diversion_reason:, verify_original:, additional_info:)`
+#### `#sign_diverted_call(shaken_identity_header:, new_destination:, original_destination:, verify_original:, additional_info:)`
 
-Sign a diverted call, returning both the original SHAKEN header and a new DIV Identity header.
+Sign a diverted call, returning both the original SIP Identity header and a new DIV Identity header.
 
 ```ruby
 result = auth.sign_diverted_call(
   shaken_identity_header: original_header,
   new_destination: '+15553334444',
-  original_destination: '+15559876543',
-  diversion_reason: 'forwarding'
+  original_destination: '+15559876543'
 )
-# result[:shaken_header]  -- original SHAKEN Identity header (passed through)
+# result[:shaken_header]  -- original SIP Identity header (passed through)
 # result[:div_header]     -- new DIV Identity header
 ```
 
 **Parameters:**
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `shaken_identity_header:` | `String` | (required) | Original SHAKEN SIP Identity header |
+| `shaken_identity_header:` | `String` | (required) | Original SIP Identity header |
 | `new_destination:` | `String, Array<String>` | (required) | Number(s) where call is diverted to |
 | `original_destination:` | `String` | (required) | Number where call was originally going |
-| `diversion_reason:` | `String` | `'forwarding'` | Reason for diversion |
 | `verify_original:` | `Boolean` | `false` | Whether to verify the original PASSporT signature |
 | `additional_info:` | `Hash` | `{}` | Additional SIP header parameters for the DIV header |
 
@@ -772,23 +765,18 @@ DIV PASSporT (Diversion Personal Assertion Token) per RFC 8946. Inherits from `P
 | `EXTENSION` | `'div'` | JWT `ppt` header value (overrides parent's `'shaken'`) |
 | `ALGORITHM` | `'ES256'` | Inherited from `Passport` |
 | `TOKEN_TYPE` | `'passport'` | Inherited from `Passport` |
-| `VALID_DIVERSION_REASONS` | (see below) | Frozen array of 10 valid diversion reason strings |
-
-**Valid diversion reasons:** `forwarding`, `deflection`, `follow-me`, `time-of-day`, `user-busy`, `no-answer`, `unavailable`, `unconditional`, `away`, `unknown`
 
 ### Class Methods
 
-#### `.create_div(original_passport:, new_destination:, original_destination:, diversion_reason:, origination_id:, certificate_url:, private_key:)`
+#### `.create_div(original_passport:, new_destination:, original_destination:, certificate_url:, private_key:)`
 
-Create a DIV PASSporT token from an existing parsed PASSporT.
+Create a DIV PASSporT token from an existing parsed PASSporT (RFC 8946 §3).
 
 ```ruby
 div_token = StirShaken::DivPassport.create_div(
   original_passport: passport,
   new_destination: '+15553334444',
   original_destination: '+15559876543',
-  diversion_reason: 'forwarding',
-  origination_id: nil,
   certificate_url: 'https://example.com/cert.pem',
   private_key: private_key
 )
@@ -797,30 +785,27 @@ div_token = StirShaken::DivPassport.create_div(
 **Parameters:**
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `original_passport:` | `StirShaken::Passport` | (required) | The original SHAKEN PASSporT |
+| `original_passport:` | `StirShaken::Passport` | (required) | The original PASSporT being diverted |
 | `new_destination:` | `String, Array<String>` | (required) | Diversion target number(s) |
 | `original_destination:` | `String` | (required) | Original destination number |
-| `diversion_reason:` | `String` | `'forwarding'` | Reason for diversion |
-| `origination_id:` | `String` | `nil` | Uses original passport's origination_id if omitted |
 | `certificate_url:` | `String` | (required) | URL to signing certificate |
 | `private_key:` | `OpenSSL::PKey::EC` | (required) | P-256 private key for signing |
 
-**Returns:** `String` -- encoded DIV PASSporT JWT token.
+**Returns:** `String` -- encoded DIV PASSporT JWT token. The token's `iat` is copied from the original PASSporT (RFC 8946 §3 SHOULD).
 
-**Raises:** `InvalidDiversionReasonError`, `InvalidPhoneNumberError`
+**Raises:** `InvalidPhoneNumberError`
 
 ---
 
-#### `.create_from_identity_header(shaken_identity_header:, new_destination:, original_destination:, diversion_reason:, certificate_url:, private_key:, public_key:)`
+#### `.create_from_identity_header(shaken_identity_header:, new_destination:, original_destination:, certificate_url:, private_key:, public_key:)`
 
-Create a DIV PASSporT from an existing SHAKEN SIP Identity header string. Parses the header, extracts the PASSporT, and creates the DIV token.
+Create a DIV PASSporT from an existing SIP Identity header string. Parses the header, extracts the PASSporT, and creates the DIV token.
 
 ```ruby
 div_token = StirShaken::DivPassport.create_from_identity_header(
   shaken_identity_header: header_string,
   new_destination: '+15553334444',
   original_destination: '+15559876543',
-  diversion_reason: 'user-busy',
   certificate_url: 'https://example.com/cert.pem',
   private_key: private_key,
   public_key: nil  # set to verify original signature
@@ -830,10 +815,9 @@ div_token = StirShaken::DivPassport.create_from_identity_header(
 **Parameters:**
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `shaken_identity_header:` | `String` | (required) | Original SHAKEN SIP Identity header |
+| `shaken_identity_header:` | `String` | (required) | Original SIP Identity header |
 | `new_destination:` | `String, Array<String>` | (required) | Diversion target number(s) |
 | `original_destination:` | `String` | (required) | Original destination number |
-| `diversion_reason:` | `String` | `'forwarding'` | Reason for diversion |
 | `certificate_url:` | `String` | (required) | URL to signing certificate |
 | `private_key:` | `OpenSSL::PKey::EC` | (required) | P-256 private key for signing |
 | `public_key:` | `OpenSSL::PKey::EC` | `nil` | Public key to verify original PASSporT (signature verified only if provided) |
@@ -844,7 +828,7 @@ div_token = StirShaken::DivPassport.create_from_identity_header(
 
 #### `.parse(token, public_key:, verify_signature:)`
 
-Parse and optionally verify a DIV PASSporT JWT token. Validates both standard PASSporT claims and DIV-specific claims (`div.tn`, `div.reason`).
+Parse and optionally verify a DIV PASSporT JWT token. Validates the RFC 8946 claim set (`orig`, `dest`, `iat`, `div.tn`).
 
 ```ruby
 div_passport = StirShaken::DivPassport.parse(token, public_key: pub_key, verify_signature: true)
@@ -859,13 +843,13 @@ div_passport = StirShaken::DivPassport.parse(token, public_key: pub_key, verify_
 
 **Returns:** `StirShaken::DivPassport`
 
-**Raises:** `InvalidTokenError`, `PassportValidationError`, `InvalidDiversionReasonError`
+**Raises:** `InvalidTokenError`, `PassportValidationError`
 
 ---
 
 #### `.verify_chain(div_token:, shaken_token:, div_public_key:, shaken_public_key:)`
 
-Verify that a DIV PASSporT correctly chains back to an original SHAKEN PASSporT. Checks originating number match, origination ID match, and that the DIV original destination appears in the SHAKEN destinations.
+Verify that a DIV PASSporT correctly chains back to its original PASSporT. Checks originating number match and that the DIV original destination appears in the original PASSporT's destinations.
 
 ```ruby
 result = StirShaken::DivPassport.verify_chain(
@@ -884,28 +868,11 @@ result = StirShaken::DivPassport.verify_chain(
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `div_token:` | `String` | (required) | DIV PASSporT JWT token |
-| `shaken_token:` | `String` | (required) | Original SHAKEN PASSporT JWT token |
+| `shaken_token:` | `String` | (required) | Original PASSporT JWT token |
 | `div_public_key:` | `OpenSSL::PKey::EC` | (required) | Public key for DIV token verification |
-| `shaken_public_key:` | `OpenSSL::PKey::EC` | `nil` | Public key for SHAKEN token verification (unverified if nil) |
+| `shaken_public_key:` | `OpenSSL::PKey::EC` | `nil` | Public key for original token verification (unverified if nil) |
 
 **Returns:** `Hash` -- On success: `{ valid: true, div_passport: DivPassport, shaken_passport: Passport }`. On failure: `{ valid: false, reason: String }`.
-
----
-
-#### `.validate_diversion_reason!(reason)`
-
-Validate a diversion reason string against `VALID_DIVERSION_REASONS`.
-
-```ruby
-StirShaken::DivPassport.validate_diversion_reason!('forwarding')
-```
-
-**Parameters:**
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| `reason` | `String` | Diversion reason to validate |
-
-**Raises:** `InvalidDiversionReasonError` if the reason is not in the valid list.
 
 ---
 
@@ -915,17 +882,13 @@ StirShaken::DivPassport.validate_diversion_reason!('forwarding')
 
 **Returns:** `String` -- the original destination number from `div.tn`.
 
-#### `#diversion_reason`
-
-**Returns:** `String` -- the reason for diversion from `div.reason`.
-
 #### `#div_passport?`
 
 **Returns:** `Boolean` -- `true` if the `ppt` header equals `'div'`.
 
 #### `#to_h`
 
-**Returns:** `Hash` -- parent `Passport#to_h` merged with `:original_destination`, `:diversion_reason`, and `:div_passport` (`true`).
+**Returns:** `Hash` -- parent `Passport#to_h` with `:attestation` and `:origination_id` removed (RFC 8946 DIV PASSporTs don't carry those claims), merged with `:original_destination` and `:div_passport` (`true`).
 
 ---
 
@@ -1549,4 +1512,3 @@ All errors inherit from `StirShaken::Error`, which inherits from `StandardError`
 | `StirShaken::InvalidIdentityHeaderError` | `Error` | Malformed SIP Identity header |
 | `StirShaken::InvalidTokenError` | `Error` | Malformed or invalid JWT token |
 | `StirShaken::ConfigurationError` | `Error` | Missing or invalid configuration |
-| `StirShaken::InvalidDiversionReasonError` | `Error` | Invalid diversion reason for DIV PASSporT |

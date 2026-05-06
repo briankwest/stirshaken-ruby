@@ -237,4 +237,3 @@ All errors inherit from `StirShaken::Error`, which inherits from `StandardError`
 | `InvalidIdentityHeaderError` | `Error` | Malformed SIP Identity header (missing token/parameters separator, missing required `info`/`alg`/`ppt` parameters, unsupported algorithm or extension, invalid info URL, header injection characters in parameters) |
 | `InvalidTokenError` | `Error` | JWT decode failure (malformed Base64, invalid JSON, corrupted token structure) |
 | `ConfigurationError` | `Error` | Invalid configuration values (timeout, cache TTL, max age out of bounds; invalid attestation level) |
-| `InvalidDiversionReasonError` | `Error` | Diversion reason in a div-PASSporT is not a recognized value |

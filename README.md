@@ -257,8 +257,7 @@ StirShaken::Error
 ├── InvalidPhoneNumberError
 ├── InvalidIdentityHeaderError
 ├── InvalidTokenError
-├── ConfigurationError
-└── InvalidDiversionReasonError
+└── ConfigurationError
 ```
 
 ```ruby

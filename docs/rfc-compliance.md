@@ -102,19 +102,18 @@ RFC 8946 defines the DIV extension to PASSporT for call diversion scenarios.
 |---------|-------------|--------|-------|
 | 3 | `ppt` header value `"div"` | Implemented | `DivPassport::EXTENSION = 'div'`; enforced in `DivPassport#validate_header!` |
 | 3 | `div` claim with `tn` (original destination) | Implemented | `DivPassport#original_destination` reads `div.tn` |
-| 3 | `div` claim with `reason` | Implemented | `DivPassport#diversion_reason` reads `div.reason` |
-| 3 | Valid diversion reason values | Implemented | All 10 reasons defined: `forwarding`, `deflection`, `follow-me`, `time-of-day`, `user-busy`, `no-answer`, `unavailable`, `unconditional`, `away`, `unknown` |
 | 3 | Preservation of `orig.tn` from original PASSporT | Implemented | `DivPassport.create_div` copies `originating_number` from the original passport |
-| 3 | Preservation of `origid` from original PASSporT | Implemented | `DivPassport.create_div` defaults `origination_id` to the original passport's `origination_id` |
+| 3 | `iat` matches the original PASSporT's `iat` (SHOULD) | Implemented | `DivPassport.create_div` copies `iat` from the original passport |
 | 3 | `dest` contains new (diverted-to) destinations | Implemented | `DivPassport.create_div` sets `dest.tn` to the new destination(s) |
-| 4 | DIV PASSporT creation | Implemented | `DivPassport.create_div` and `DivPassport.create_from_identity_header` |
-| 4 | DIV PASSporT from existing Identity header | Implemented | `DivPassport.create_from_identity_header` parses the SHAKEN header and creates the DIV token |
-| 5 | Chain verification (originating number match) | Implemented | `DivPassport.verify_chain` checks `orig.tn` match |
-| 5 | Chain verification (origination ID match) | Implemented | `DivPassport.verify_chain` checks `origid` match |
-| 5 | Chain verification (destination linkage) | Implemented | `DivPassport.verify_chain` checks that `div.tn` appears in the SHAKEN `dest.tn` |
-| 5 | Complete call forwarding workflow | Implemented | `AuthenticationService#create_call_forwarding` handles the full scenario with attestation reduction |
-| 5 | Attestation handling for forwarded calls | Implemented | `AuthenticationService#determine_forwarding_attestation` reduces A->B, B->C, C->C |
-| 6 | DIV SIP Identity header | Implemented | `AuthenticationService#sign_diverted_call` creates DIV headers using `SipIdentity.create` with `ppt=div` |
+| 3 | DIV PASSporT creation | Implemented | `DivPassport.create_div` and `DivPassport.create_from_identity_header` |
+| 3 | DIV PASSporT from existing Identity header | Implemented | `DivPassport.create_from_identity_header` parses the SIP Identity header and creates the DIV token |
+| 3 | Chain verification (originating number match) | Implemented | `DivPassport.verify_chain` checks `orig.tn` match |
+| 3 | Chain verification (destination linkage) | Implemented | `DivPassport.verify_chain` checks that `div.tn` appears in the original `dest.tn` |
+| -- | Complete call forwarding workflow | Implemented | `AuthenticationService#create_call_forwarding` handles the full scenario with attestation reduction on the forwarded SHAKEN leg |
+| -- | Attestation handling for forwarded SHAKEN leg | Implemented | `AuthenticationService#determine_forwarding_attestation` reduces A->B, B->C, C->C |
+| -- | DIV SIP Identity header | Implemented | `AuthenticationService#sign_diverted_call` creates DIV headers using `SipIdentity.create` with `ppt=div` |
+| 5 | `div-o` PASSporT (nested original via `opt`) | Not implemented | Out of scope for this gem |
+| 8 | `reason` in `div` claim | Not applicable | RFC 8946 §8 reserves this for future extensions; not part of the current spec |
 
 ---
 

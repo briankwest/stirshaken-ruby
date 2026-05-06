@@ -93,115 +93,94 @@ module StirShaken
     end
 
     ##
-    # Create a DIV PASSporT token for call diversion/forwarding
+    # Create a DIV PASSporT token for call diversion/forwarding (RFC 8946)
     #
-    # @param original_passport [Passport] the original SHAKEN PASSporT
+    # @param original_passport [Passport] the original PASSporT being diverted
     # @param new_destination [String, Array<String>] where call is being diverted to
     # @param original_destination [String] where call was originally going
-    # @param diversion_reason [String] reason for diversion (default: 'forwarding')
-    # @param origination_id [String] unique origination identifier (optional)
     # @return [String] the DIV PASSporT JWT token
-    def create_div_passport(original_passport:, new_destination:, original_destination:,
-                           diversion_reason: 'forwarding', origination_id: nil)
+    def create_div_passport(original_passport:, new_destination:, original_destination:)
       begin
         div_token = DivPassport.create_div(
           original_passport: original_passport,
           new_destination: new_destination,
           original_destination: original_destination,
-          diversion_reason: diversion_reason,
-          origination_id: origination_id,
           certificate_url: certificate_url,
           private_key: private_key
         )
 
-        # Log successful DIV PASSporT creation
         SecurityLogger.log_security_event(:div_passport_created, {
-          originating_number: SecurityLogger.mask_phone_number( original_passport.originating_number),
-          original_destination: SecurityLogger.mask_phone_number( original_destination),
-          new_destination_count: Array(new_destination).size,
-          diversion_reason: diversion_reason,
-          attestation: original_passport.attestation
+          originating_number: SecurityLogger.mask_phone_number(original_passport.originating_number),
+          original_destination: SecurityLogger.mask_phone_number(original_destination),
+          new_destination_count: Array(new_destination).size
         }, severity: :low)
 
         div_token
       rescue => error
-        # Log DIV PASSporT creation failure
         SecurityLogger.log_security_failure(:div_passport_creation_failure, error, {
-          originating_number: SecurityLogger.mask_phone_number( original_passport.originating_number),
-          original_destination: SecurityLogger.mask_phone_number( original_destination),
-          diversion_reason: diversion_reason
+          originating_number: SecurityLogger.mask_phone_number(original_passport.originating_number),
+          original_destination: SecurityLogger.mask_phone_number(original_destination)
         })
         raise
       end
     end
 
     ##
-    # Create a DIV PASSporT from an existing SHAKEN Identity header
+    # Create a DIV PASSporT from an existing SIP Identity header (RFC 8946)
     #
-    # @param shaken_identity_header [String] the original SHAKEN Identity header
+    # @param shaken_identity_header [String] the original SIP Identity header
     # @param new_destination [String, Array<String>] where call is being diverted to
     # @param original_destination [String] where call was originally going
-    # @param diversion_reason [String] reason for diversion (default: 'forwarding')
     # @param verify_original [Boolean] whether to verify the original PASSporT signature
     # @return [String] the DIV PASSporT JWT token
     def create_div_passport_from_header(shaken_identity_header:, new_destination:, original_destination:,
-                                       diversion_reason: 'forwarding', verify_original: false)
+                                       verify_original: false)
       begin
-        # Determine public key for verification if requested
         public_key = verify_original ? CertificateManager.extract_public_key(certificate) : nil
 
         div_token = DivPassport.create_from_identity_header(
           shaken_identity_header: shaken_identity_header,
           new_destination: new_destination,
           original_destination: original_destination,
-          diversion_reason: diversion_reason,
           certificate_url: certificate_url,
           private_key: private_key,
           public_key: public_key
         )
 
-        # Log successful DIV PASSporT creation from header
         SecurityLogger.log_security_event(:div_passport_from_header_created, {
-          original_destination: SecurityLogger.mask_phone_number( original_destination),
+          original_destination: SecurityLogger.mask_phone_number(original_destination),
           new_destination_count: Array(new_destination).size,
-          diversion_reason: diversion_reason,
           verified_original: verify_original
         }, severity: :low)
 
         div_token
       rescue => error
-        # Log DIV PASSporT creation failure
         SecurityLogger.log_security_failure(:div_passport_from_header_failure, error, {
-          original_destination: SecurityLogger.mask_phone_number( original_destination),
-          diversion_reason: diversion_reason
+          original_destination: SecurityLogger.mask_phone_number(original_destination)
         })
         raise
       end
     end
 
     ##
-    # Sign a diverted call and create both SHAKEN and DIV SIP Identity headers
+    # Sign a diverted call and create both original and DIV SIP Identity headers
     #
-    # @param shaken_identity_header [String] the original SHAKEN Identity header
+    # @param shaken_identity_header [String] the original SIP Identity header
     # @param new_destination [String, Array<String>] where call is being diverted to
     # @param original_destination [String] where call was originally going
-    # @param diversion_reason [String] reason for diversion (default: 'forwarding')
     # @param verify_original [Boolean] whether to verify the original PASSporT signature
     # @param additional_info [Hash] additional SIP header parameters for DIV header
     # @return [Hash] hash with :shaken_header and :div_header
     def sign_diverted_call(shaken_identity_header:, new_destination:, original_destination:,
-                          diversion_reason: 'forwarding', verify_original: false, additional_info: {})
+                          verify_original: false, additional_info: {})
       begin
-        # Create DIV PASSporT token
         div_token = create_div_passport_from_header(
           shaken_identity_header: shaken_identity_header,
           new_destination: new_destination,
           original_destination: original_destination,
-          diversion_reason: diversion_reason,
           verify_original: verify_original
         )
 
-        # Create DIV SIP Identity header
         div_header = SipIdentity.create(
           passport_token: div_token,
           certificate_url: certificate_url,
@@ -210,11 +189,9 @@ module StirShaken
           additional_info: additional_info
         )
 
-        # Log successful diverted call signing
         SecurityLogger.log_security_event(:diverted_call_signed, {
-          original_destination: SecurityLogger.mask_phone_number( original_destination),
-          new_destination_count: Array(new_destination).size,
-          diversion_reason: diversion_reason
+          original_destination: SecurityLogger.mask_phone_number(original_destination),
+          new_destination_count: Array(new_destination).size
         }, severity: :low)
 
         {
@@ -222,10 +199,8 @@ module StirShaken
           div_header: div_header
         }
       rescue => error
-        # Log diverted call signing failure
         SecurityLogger.log_security_failure(:diverted_call_signing_failure, error, {
-          original_destination: SecurityLogger.mask_phone_number( original_destination),
-          diversion_reason: diversion_reason
+          original_destination: SecurityLogger.mask_phone_number(original_destination)
         })
         raise
       end
@@ -239,20 +214,13 @@ module StirShaken
     # @return [Hash] complete forwarding headers and metadata
     def create_call_forwarding(original_call_info:, forwarding_info:)
       begin
-        # Extract original call information
         originating_number = original_call_info[:originating_number]
         original_destination = original_call_info[:destination_number]
         original_attestation = original_call_info[:attestation] || 'A'
 
-        # Extract forwarding information
         new_destination = forwarding_info[:new_destination]
-        diversion_reason = forwarding_info[:reason] || 'forwarding'
-        
-        # Determine appropriate attestation for forwarded call
-        # Generally reduce attestation level for forwarded calls unless explicitly specified
         forwarded_attestation = forwarding_info[:attestation] || determine_forwarding_attestation(original_attestation)
 
-        # Create original SHAKEN header (if not provided)
         shaken_header = original_call_info[:identity_header] || sign_call(
           originating_number: originating_number,
           destination_number: original_destination,
@@ -260,30 +228,25 @@ module StirShaken
           origination_id: original_call_info[:origination_id]
         )
 
-        # Create new SHAKEN header for forwarded destination with reduced attestation
         forwarded_shaken_header = sign_call(
           originating_number: originating_number,
           destination_number: new_destination,
           attestation: forwarded_attestation,
-          origination_id: original_call_info[:origination_id] # Keep same origination ID
+          origination_id: original_call_info[:origination_id]
         )
 
-        # Create DIV PASSporT to indicate forwarding
         div_result = sign_diverted_call(
           shaken_identity_header: shaken_header,
           new_destination: new_destination,
-          original_destination: original_destination,
-          diversion_reason: diversion_reason
+          original_destination: original_destination
         )
 
-        # Log successful call forwarding setup
         SecurityLogger.log_security_event(:call_forwarding_created, {
-          originating_number: SecurityLogger.mask_phone_number( originating_number),
-          original_destination: SecurityLogger.mask_phone_number( original_destination),
+          originating_number: SecurityLogger.mask_phone_number(originating_number),
+          original_destination: SecurityLogger.mask_phone_number(original_destination),
           new_destination_count: Array(new_destination).size,
           original_attestation: original_attestation,
-          forwarded_attestation: forwarded_attestation,
-          diversion_reason: diversion_reason
+          forwarded_attestation: forwarded_attestation
         }, severity: :low)
 
         {
@@ -296,15 +259,13 @@ module StirShaken
             new_destination: new_destination,
             original_attestation: original_attestation,
             forwarded_attestation: forwarded_attestation,
-            diversion_reason: diversion_reason,
             origination_id: original_call_info[:origination_id]
           }
         }
       rescue => error
-        # Log call forwarding failure
         SecurityLogger.log_security_failure(:call_forwarding_failure, error, {
-          originating_number: SecurityLogger.mask_phone_number( original_call_info[:originating_number]),
-          original_destination: SecurityLogger.mask_phone_number( original_call_info[:destination_number])
+          originating_number: SecurityLogger.mask_phone_number(original_call_info[:originating_number]),
+          original_destination: SecurityLogger.mask_phone_number(original_call_info[:destination_number])
         })
         raise
       end
